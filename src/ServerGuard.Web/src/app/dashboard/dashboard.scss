@@ -1,0 +1,106 @@
+:host {
+  display: block;
+  padding: 1.5rem;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #1a1c1e;
+}
+
+.dashboard-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+
+  /* Sunucu seçici satırın sağ ucuna yaslanır. */
+  .server-selector {
+    margin-left: auto;
+  }
+
+  h1 {
+    margin: 0;
+    font-size: 1.5rem;
+    font-weight: 600;
+  }
+}
+
+.connection {
+  padding: 0.25rem 0.75rem;
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  border: 1px solid currentcolor;
+
+  &--connected {
+    color: #2b8a3e;
+  }
+
+  &--connecting,
+  &--reconnecting {
+    color: #e67700;
+  }
+
+  &--disconnected {
+    color: #c92a2a;
+  }
+}
+
+.empty {
+  color: #5c5f66;
+}
+
+.server-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr));
+  gap: 1rem;
+}
+
+.server-card {
+  border: 1px solid #dee2e6;
+  border-radius: 0.75rem;
+  padding: 1rem;
+  background: #fff;
+
+  h2 {
+    margin: 0 0 0.5rem;
+    font-size: 1.0625rem;
+    font-weight: 600;
+  }
+}
+
+.gauges {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.gauge {
+  text-align: center;
+}
+
+.reading {
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.last-seen {
+  margin-top: 0.75rem;
+  font-size: 0.8125rem;
+  color: #5c5f66;
+}
+
+.traffic-section {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 1.5rem;
+  margin-top: 2rem;
+
+  @media (max-width: 60rem) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.alerts-section {
+  margin-top: 2rem;
+}

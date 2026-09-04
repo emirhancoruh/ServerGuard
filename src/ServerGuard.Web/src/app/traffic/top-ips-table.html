@@ -1,0 +1,46 @@
+<header class="section-header">
+  <h2>En Çok İstek Atan IP'ler</h2>
+  <span class="subtitle">ilk {{ topCount }} · son {{ windowMinutes }} dakika</span>
+</header>
+
+@switch (state()) {
+  @case ('loading') {
+    <p class="status status--loading">Liste yükleniyor…</p>
+  }
+  @case ('error') {
+    <div class="status status--error">
+      <p>Liste yüklenemedi.</p>
+      <button type="button" (click)="reload()">Yeniden dene</button>
+    </div>
+  }
+  @default {
+    @if (rows().length === 0) {
+      <p class="status">Bu aralıkta trafik kaydı yok.</p>
+    } @else {
+      <div class="table-scroll">
+        <table class="top-ip-table">
+          <thead>
+            <tr>
+              <th scope="col" class="rank">#</th>
+              <th scope="col">IP adresi</th>
+              <th scope="col" class="count">İstek</th>
+              <th scope="col" class="share">Pay</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of rows(); track row.clientIp; let index = $index) {
+              <tr>
+                <td class="rank">{{ index + 1 }}</td>
+                <td class="ip">{{ row.clientIp }}</td>
+                <td class="count">{{ row.requestCount }}</td>
+                <td class="share">
+                  <span class="bar" [style.width.%]="sharePercent(row)"></span>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+  }
+}

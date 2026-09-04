@@ -1,0 +1,104 @@
+:host {
+  display: block;
+}
+
+.alerts-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+
+  h2 {
+    margin: 0;
+    font-size: 1.125rem;
+    font-weight: 600;
+  }
+}
+
+.count {
+  padding: 0.125rem 0.5rem;
+  border-radius: 999px;
+  background: #e9ecef;
+  color: #495057;
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.empty,
+.notice {
+  margin: 0;
+  color: #5c5f66;
+  font-size: 0.875rem;
+}
+
+.notice {
+  color: #b5560a;
+}
+
+/* Geniş tablo sayfayı yatay kaydırmaya zorlamasın. */
+.table-scroll {
+  overflow-x: auto;
+  border: 1px solid #dee2e6;
+  border-radius: 0.75rem;
+  background: #fff;
+}
+
+.alert-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+
+  th,
+  td {
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid #f1f3f5;
+    white-space: nowrap;
+  }
+
+  th {
+    font-weight: 600;
+    color: #495057;
+    background: #f8f9fa;
+    position: sticky;
+    top: 0;
+  }
+
+  tbody tr:last-child td {
+    border-bottom: none;
+  }
+}
+
+.time {
+  font-variant-numeric: tabular-nums;
+}
+
+.description {
+  white-space: normal;
+  min-width: 22rem;
+}
+
+.severity {
+  display: inline-block;
+  padding: 0.125rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #fff;
+
+  &--critical {
+    background: #a61e1e;
+  }
+
+  &--high {
+    background: #e03131;
+  }
+
+  &--medium {
+    background: #f08c00;
+  }
+
+  &--low {
+    background: #868e96;
+  }
+}

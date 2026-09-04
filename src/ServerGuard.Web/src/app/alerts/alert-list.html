@@ -1,0 +1,43 @@
+<header class="alerts-header">
+  <h2>Güvenlik Alarmları</h2>
+  @if (totalCount() > 0) {
+    <span class="count">{{ totalCount() }}</span>
+  }
+</header>
+
+@if (loadFailed()) {
+  <p class="notice">Geçmiş alarmlar yüklenemedi. Yeni alarmlar geldikçe burada görünecek.</p>
+}
+
+@if (!hasAlerts()) {
+  <p class="empty">Alarm yok.</p>
+} @else {
+  <div class="table-scroll">
+    <table class="alert-table">
+      <thead>
+        <tr>
+          <th scope="col">Zaman</th>
+          <th scope="col">Sunucu</th>
+          <th scope="col">Tip</th>
+          <th scope="col">Açıklama</th>
+          <th scope="col">Önem</th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (alert of alerts(); track alert.id) {
+          <tr>
+            <td class="time">{{ alert.timestamp | date: 'dd.MM.yyyy HH:mm:ss' }}</td>
+            <td>{{ alert.serverName }}</td>
+            <td>{{ alert.alertType }}</td>
+            <td class="description">{{ alert.description }}</td>
+            <td>
+              <span class="severity" [class]="severityClass(alert.severity)">
+                {{ alert.severity }}
+              </span>
+            </td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  </div>
+}

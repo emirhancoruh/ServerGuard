@@ -1,0 +1,41 @@
+<header class="section-header">
+  <h2>Trafik</h2>
+  <span class="subtitle">son {{ windowMinutes }} dakika</span>
+</header>
+
+@switch (state()) {
+  @case ('loading') {
+    <p class="status status--loading">Trafik verisi yükleniyor…</p>
+  }
+  @case ('error') {
+    <div class="status status--error">
+      <p>Trafik verisi yüklenemedi.</p>
+      <button type="button" (click)="reload()">Yeniden dene</button>
+    </div>
+  }
+  @default {
+    @if (points().length === 0) {
+      <p class="status">Bu aralıkta trafik kaydı yok.</p>
+    } @else {
+      <dx-chart [dataSource]="points()">
+        <dxi-series
+          type="line"
+          argumentField="timestamp"
+          valueField="requestCount"
+          name="İstek"
+          color="#1c7ed6">
+          <dxo-point [visible]="false"></dxo-point>
+        </dxi-series>
+        <dxo-argument-axis argumentType="datetime">
+          <dxo-label format="HH:mm"></dxo-label>
+        </dxo-argument-axis>
+        <dxi-value-axis [allowDecimals]="false">
+          <dxo-title text="İstek sayısı"></dxo-title>
+        </dxi-value-axis>
+        <dxo-legend [visible]="false"></dxo-legend>
+        <dxo-tooltip [enabled]="true"></dxo-tooltip>
+        <dxo-common-series-settings [ignoreEmptyPoints]="false"></dxo-common-series-settings>
+      </dx-chart>
+    }
+  }
+}

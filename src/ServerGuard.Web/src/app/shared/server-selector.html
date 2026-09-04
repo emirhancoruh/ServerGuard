@@ -1,0 +1,24 @@
+<label class="selector">
+  <span class="label">Sunucu</span>
+
+  @switch (state()) {
+    @case ('loading') {
+      <select disabled>
+        <option>Yükleniyor…</option>
+      </select>
+    }
+    @case ('error') {
+      <button type="button" class="retry" (click)="load()">Sunucular yüklenemedi · yeniden dene</button>
+    }
+    @default {
+      <select
+        [value]="selected() ?? allServersValue"
+        (change)="onSelectionChange($any($event.target).value)">
+        <option [value]="allServersValue">Tüm sunucular</option>
+        @for (server of servers(); track server.serverName) {
+          <option [value]="server.serverName">{{ server.serverName }}</option>
+        }
+      </select>
+    }
+  }
+</label>
