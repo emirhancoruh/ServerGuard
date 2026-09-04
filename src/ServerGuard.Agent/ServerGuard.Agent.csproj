@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>dotnet-ServerGuard.Agent-89dd3616-960b-4836-bcaf-1086535595d7</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.19" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="9.0.19" />
+    <PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="9.10.0" />
+    <PackageReference Include="Microsoft.Extensions.Options.DataAnnotations" Version="9.0.19" />
+    <PackageReference Include="System.Diagnostics.PerformanceCounter" Version="9.0.19" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ServerGuard.Shared\ServerGuard.Shared.csproj" />
+  </ItemGroup>
+</Project>
