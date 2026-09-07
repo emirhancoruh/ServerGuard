@@ -19,4 +19,10 @@ public sealed class SecurityAlert
     public required string Description { get; init; }
     public required DateTimeOffset Timestamp { get; init; }
     public required DateTimeOffset CreatedAt { get; init; }
+
+    /// <summary>
+    /// Dış itibar servisinden gelen 0-100 arası skor. Bilgi alınamadıysa <c>null</c> kalır;
+    /// "skor yok" ile "skor sıfır" farklı anlamlar taşıdığı için alan nullable'dır.
+    /// </summary>
+    public int? AbuseConfidenceScore { get; init; }
 }

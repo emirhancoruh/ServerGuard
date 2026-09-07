@@ -35,7 +35,8 @@ public sealed class SecurityAlertRepository(ServerGuardDbContext dbContext) : IS
                 alert.SourceIp,
                 alert.ObservedCount,
                 alert.Description,
-                alert.Timestamp))
+                alert.Timestamp,
+                alert.AbuseConfidenceScore))
             .ToListAsync(cancellationToken);
 
         return new PagedResult<SecurityAlertDto>(items, query.Page, query.PageSize, totalCount);

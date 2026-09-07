@@ -4,6 +4,7 @@ using ServerGuard.Api.Data.Entities;
 using ServerGuard.Api.Mapping;
 using ServerGuard.Api.Realtime;
 using ServerGuard.Api.Repositories;
+using ServerGuard.Api.Reputation;
 using ServerGuard.Shared;
 using ServerGuard.Shared.Dtos;
 using ServerGuard.Shared.Enums;
@@ -41,6 +42,7 @@ public sealed class TrafficAnomalyDetectionService(
     ITrafficWindowStore windowStore,
     ISecurityAlertRepository alertRepository,
     IMonitoringBroadcaster broadcaster,
+    IIpReputationService ipReputation,
     IOptions<TrafficAnomalyOptions> options,
     TimeProvider timeProvider,
     ILogger<TrafficAnomalyDetectionService> logger) : ITrafficAnomalyDetectionService
@@ -84,6 +86,11 @@ public sealed class TrafficAnomalyDetectionService(
     {
         var detectedAt = timeProvider.GetUtcNow();
 
+        // İtibar sorgusu en iyi çaba ilkesiyle yapılır: skor gelmezse null kalır ve alarm
+        // yine de üretilir. Servis exception fırlatmaz ve süresi resilience pipeline'ıyla
+        // sınırlıdır, bu yüzden alarm üretimi dış servise bağımlı hale gelmez.
+        var abuseConfidenceScore = await ipReputation.TryGetAbuseScoreAsync(trafficLog.ClientIp, cancellationToken);
+
         var alert = new SecurityAlert
         {
             ServerName = trafficLog.ServerName,
@@ -91,9 +98,10 @@ public sealed class TrafficAnomalyDetectionService(
             Severity = AlertSeverity.Medium,
             SourceIp = trafficLog.ClientIp,
             ObservedCount = requestsInWindow,
-            Description = BuildDescription(trafficLog.ClientIp, requestsInWindow),
+            Description = BuildDescription(trafficLog.ClientIp, requestsInWindow, abuseConfidenceScore),
             Timestamp = detectedAt,
-            CreatedAt = detectedAt
+            CreatedAt = detectedAt,
+            AbuseConfidenceScore = abuseConfidenceScore
         };
 
         // Önce kaydedilir; yayınlanan alarm kalıcı Id'yi taşır, böylece panel canlı gelen
@@ -102,18 +110,19 @@ public sealed class TrafficAnomalyDetectionService(
 
         logger.LogWarning(
             "Traffic anomaly alert raised. AlertId={AlertId} Server={ServerName} ClientIp={ClientIp} " +
-            "Requests={Requests} Window={Window} TrackedIps={TrackedIps}",
+            "Requests={Requests} Window={Window} AbuseScore={AbuseScore} TrackedIps={TrackedIps}",
             saved.Id,
             saved.ServerName,
             saved.SourceIp,
             requestsInWindow,
             _options.Window,
+            abuseConfidenceScore,
             windowStore.TrackedCount);
 
         await broadcaster.BroadcastAlertAsync(saved.ToDto(), cancellationToken);
     }
 
-    private string BuildDescription(string clientIp, int requestsInWindow)
+    private string BuildDescription(string clientIp, int requestsInWindow, int? abuseConfidenceScore)
     {
         var description = string.Format(
             CultureInfo.InvariantCulture,
@@ -122,6 +131,14 @@ public sealed class TrafficAnomalyDetectionService(
             _options.Window.TotalMinutes,
             requestsInWindow,
             _options.RequestThreshold);
+
+        if (abuseConfidenceScore is not null)
+        {
+            description += string.Format(
+                CultureInfo.InvariantCulture,
+                " AbuseIPDB kötüye kullanım skoru: {0}/100.",
+                abuseConfidenceScore);
+        }
 
         return description.Length <= AlertConstraints.DescriptionMaxLength
             ? description

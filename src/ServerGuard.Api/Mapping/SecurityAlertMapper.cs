@@ -13,5 +13,6 @@ public static class SecurityAlertMapper
         entity.SourceIp,
         entity.ObservedCount,
         entity.Description,
-        entity.Timestamp);
+        entity.Timestamp,
+        entity.AbuseConfidenceScore);
 }

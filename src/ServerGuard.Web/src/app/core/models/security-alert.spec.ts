@@ -9,6 +9,7 @@ const validAlert = {
   severity: 'High',
   sourceIp: '203.0.113.10',
   observedCount: 5,
+  abuseConfidenceScore: 87,
   description: 'Beş başarısız giriş denemesi.',
   timestamp: '2026-09-04T10:00:00+00:00'
 };
@@ -54,6 +55,7 @@ describe('toSecurityAlert', () => {
     expect(result?.alertType).toBe('Bilinmiyor');
     expect(result?.sourceIp).toBe('-');
     expect(result?.observedCount).toBe(0);
+    expect(result?.abuseConfidenceScore).toBeNull();
     expect(result?.description).toBe('');
   });
 });

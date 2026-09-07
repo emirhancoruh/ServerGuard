@@ -12,6 +12,7 @@ export interface SecurityAlert {
   severity: AlertSeverity | string;
   sourceIp: string;
   observedCount: number;
+  abuseConfidenceScore: number | null;
   description: string;
   timestamp: string;
 }
@@ -46,6 +47,7 @@ export function toSecurityAlert(raw: unknown): SecurityAlert | null {
     severity: candidate.severity!,
     sourceIp: candidate.sourceIp ?? '-',
     observedCount: candidate.observedCount ?? 0,
+    abuseConfidenceScore: typeof candidate.abuseConfidenceScore === 'number' ? candidate.abuseConfidenceScore : null,
     description: candidate.description ?? '',
     timestamp: candidate.timestamp!
   };
