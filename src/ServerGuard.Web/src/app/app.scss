@@ -1,0 +1,26 @@
+.main-nav {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0 1.5rem;
+  border-bottom: 1px solid #dee2e6;
+  background: #fff;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  a {
+    padding: 0.75rem 1rem;
+    border-bottom: 2px solid transparent;
+    color: #5c5f66;
+    font-size: 0.9375rem;
+    text-decoration: none;
+
+    &:hover {
+      color: #1a1c1e;
+    }
+
+    &.active {
+      border-bottom-color: #1c7ed6;
+      color: #1c7ed6;
+      font-weight: 600;
+    }
+  }
+}

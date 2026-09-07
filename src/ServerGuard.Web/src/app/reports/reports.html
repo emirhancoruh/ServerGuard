@@ -1,0 +1,78 @@
+<header class="page-header">
+  <h1>Rapor</h1>
+  <sg-server-selector class="server-selector" />
+</header>
+
+<section class="filters">
+  <label>
+    <span>Başlangıç</span>
+    <input type="date" [value]="fromDate()" (change)="onFromChange($any($event.target).value)" />
+  </label>
+
+  <label>
+    <span>Bitiş</span>
+    <input type="date" [value]="toDate()" (change)="onToChange($any($event.target).value)" />
+  </label>
+
+  <button type="button" class="primary" [disabled]="rangeError() !== null" (click)="load()">
+    Raporu getir
+  </button>
+
+  <button type="button" [disabled]="!hasData()" (click)="exportCsv()">
+    CSV indir
+  </button>
+</section>
+
+@if (rangeError(); as error) {
+  <p class="status status--error">{{ error }}</p>
+}
+
+@switch (state()) {
+  @case ('loading') {
+    <p class="status status--loading">Rapor hazırlanıyor…</p>
+  }
+  @case ('error') {
+    <div class="status status--error">
+      <p>Rapor yüklenemedi.</p>
+      <button type="button" (click)="load()">Yeniden dene</button>
+    </div>
+  }
+  @default {
+    @if (!hasData()) {
+      <p class="status">Bu aralıkta veri yok.</p>
+    } @else {
+      <div class="table-scroll">
+        <table class="report-table">
+          <thead>
+            <tr>
+              <th scope="col">Alan</th>
+              <th scope="col">Değer</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of rows(); track row[0]) {
+              <tr>
+                <th scope="row">{{ row[0] }}</th>
+                <td>{{ row[1] }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+
+      @if (summary(); as data) {
+        @if (data.metricSampleCount === 0) {
+          <p class="note">
+            Bu aralıkta hiç metrik toplanmamış; CPU ve RAM ortalamaları hesaplanamadı.
+          </p>
+        } @else {
+          <p class="note">
+            Ortalamalar {{ data.metricSampleCount | number }} ölçüme dayanıyor.
+          </p>
+        }
+      }
+    }
+  }
+}
+
+<p class="hint">Tarih aralığı en fazla {{ maxRangeDays }} gün olabilir.</p>
