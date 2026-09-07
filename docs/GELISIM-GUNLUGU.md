@@ -702,3 +702,60 @@ Agent'ta `ServerName` ve `ApiBaseUrl`'in yapılandırılabilir olduğunu doğrul
 - **Sunucu listesi açılışta bir kez çekiliyor.** Panel açıkken yeni bir sunucu eklenirse listede görünmesi için sayfa yenilenmeli.
 - Bir sunucu tamamen sustuğunda listede `sinceHours` süresince kalmaya devam eder. "Sunucu çöktü" tespiti (son görülme zamanına bakıp uyarı üretmek) henüz yok; `lastSeenAt` alanı bu iş için hazır.
 - `ServerName` karşılaştırmaları veritabanında SQL Server'ın varsayılan harf duyarsız sıralamasına, bellekte ise `OrdinalIgnoreCase`'e dayanıyor. `web-01` ve `WEB-01` aynı sunucu sayılır.
+
+---
+
+## Prompt 12 — IP itibar sorgusu (AbuseIPDB) (2026-09-07)
+
+### Ne istendi
+`IpReputationService`. Trafik anomalisi şüpheli bir IP tespit ettiğinde AbuseIPDB'ye sorgu at (API anahtarı user-secrets/ortam değişkeninden, asla koda gömülmesin). Bu çağrıya da retry + timeout + circuit breaker uygula. AbuseIPDB yanıt vermez veya yavaş olursa **alarm üretimini bloklamasın**; itibar bilgisi eksik gelirse alarm yine de oluşsun. Skoru alarm kaydına işle. Aynı IP'yi son 1 saat içinde tekrar sorgulama (IMemoryCache, expiration tanımlı).
+
+### Ne yapıldı
+
+**Sözleşme:** `SecurityAlertDto` ve `SecurityAlert` entity'sine `AbuseConfidenceScore` (`int?`) eklendi. Alan **nullable**: "skor yok" ile "skor sıfır" farklı anlamlar taşır. Sıfır, AbuseIPDB'nin o adres hakkında olumsuz kaydı olmadığını söyler; null ise bilgi hiç alınamadı demektir.
+
+**`Reputation/AbuseIpDbClient`:** Named HttpClient + resilience. Süreler bilinçli olarak kısa: attempt 2 sn, **toplam 5 sn**, 2 retry, circuit breaker (30 sn örnekleme, %50 hata oranı, 1 dk açık kalma). `TotalRequestTimeout`, alarm üretiminin bekleyebileceği **en uzun süreyi** belirler. API anahtarı yalnızca istek başlığına konur, hiçbir log satırına yazılmaz.
+
+**`Reputation/AbuseIpDbReputationService`:** En iyi çaba (best effort) ilkesi — skor gelirse alarmı zenginleştirir, gelmezse hiçbir şeyi bozmaz. Hiçbir hata dışarı sızmaz, dönüş en kötü ihtimalle `null`.
+
+Üç ayrı korumaya sahip:
+- **Anahtar yoksa** servis sessizce devre dışı kalır ve açılışta bir bilgilendirme yazar. Sistem itibar bilgisi olmadan çalışmayı sürdürür; bu bonus bir yetenektir, zorunluluk değil.
+- **Genel internete ait olmayan adresler sorgulanmaz.** Özel ağ (10.x, 172.16-31.x, 192.168.x), loopback, link-local, CGNAT ve IPv6 karşılıkları elenir. AbuseIPDB bunlar için anlamlı sonuç dönmez; sorgulamak günlük kotayı boşa harcar.
+- **429 (rate limit) ayrı ele alınır** ve açıklayıcı bir uyarı yazılır.
+
+**Önbellek:** Kendi `MemoryCache` örneği, `SizeLimit` ile sınırlı. **Mutlak süre** (`AbsoluteExpirationRelativeToNow`) kullanılır, kayan süre değil — bu bilinçli bir tercih: skor belirli bir ana ait bir olgudur, kayan süre sık görülen bir adres için eskimiş skoru süresiz taze tutardı. Yalnızca başarılı sorgular önbelleğe alınır; başarısızlar alınsaydı geçici bir kesinti bir saat boyunca skorsuz kalmaya yol açardı.
+
+**Bağlantı:** `TrafficAnomalyDetectionService`, alarmı oluşturmadan önce skoru sorar. Skor geldiyse hem `AbuseConfidenceScore` kolonuna hem de açıklama metnine işlenir; böylece mevcut panelde ek bir UI değişikliği olmadan görünür.
+
+### Doğrulama
+
+Gerçek AbuseIPDB anahtarı olmadığı için başarı yolu, AbuseIPDB'nin `/check` yanıtını taklit eden ve gelen istekleri sayan yerel bir test sunucusuyla doğrulandı.
+
+| Test | Sonuç |
+|---|---|
+| `dotnet build` / `ng build` / 14 vitest | Hepsi geçti, 0 uyarı |
+| Migration | `AbuseConfidenceScore` kolonu nullable olarak eklendi |
+| **Anahtar tanımsız** | Bilgilendirme loglandı, alarm üretildi, skor `NULL` |
+| **İtibar servisi ULAŞILAMIYOR** | **Alarm üretildi (201), skor `NULL`, süre 5224 ms** — `TotalRequestTimeout` sınırında |
+| **Devre kesici** | Ardışık hatalardan sonra devre açıldı, süre **5224 ms → ~100 ms**'ye düştü, 7 alarmın hepsi oluştu |
+| Başarılı sorgu | Skor 100 ve 42 doğru okundu, kolona ve açıklamaya işlendi |
+| **Önbellek** | ~102 alarm üretildi, dış servise yalnızca **2 istek** gitti |
+| **Özel ağ adresi** (192.168.1.50) | Hiç sorgulanmadı (test sunucusunun sayacında yok), skor `NULL` |
+
+**Önbellek testindeki 2 istek üzerine:** Testte alarm cooldown'ı sıfırlanarak 101 eşzamanlı istek gönderildi; iki iş parçacığı önbellek dolmadan aynı anda ıskaladı ("cache stampede"). Üretimde varsayılan 5 dakikalık cooldown bu durumu pratikte imkânsız kılıyor. Tek istek garantisi için anahtar bazlı kilit (single-flight) eklenebilirdi; 102 yerine 2 istek kota koruması için fazlasıyla yeterli olduğundan bu karmaşıklık eklenmedi.
+
+### Öğrenilen kavramlar
+- **En iyi çaba (best effort) entegrasyonu**: dış servis bir *zenginleştirme*dir, bağımlılık değil. Ana akış onsuz da doğru sonuç üretebilmelidir.
+- **Zaman bütçesi**: "bloklamasın" mutlak bir ifade değildir; pratikte "sınırlı sürede pes etsin" demektir. `TotalRequestTimeout` bu sınırı tek yerden garanti eder.
+- **Circuit breaker'ın asıl değeri**: ilk hata 5 saniyeye mal olur, sonrakiler 100 ms'ye. Dış servis çöktüğünde sistem her seferinde aynı bedeli ödemez.
+- **Nullable'ın anlamı**: "veri yok" ile "değer sıfır" ayrımı. Sıfırla doldurmak, bilgi eksikliğini olumlu bir bulguymuş gibi gösterir.
+- **Mutlak vs kayan süre**: önbellekte hangisinin seçileceği verinin doğasına bağlıdır. Olgular (skor) mutlak, oturum/etkinlik verisi kayan süre ister.
+- **Kota bilinci**: ücretsiz tier'larda her çağrı sayılır. Önbellek ve gereksiz sorguların elenmesi (özel IP'ler) işlevsel değil, ekonomik gerekliliktir.
+- **Sır yönetimi**: anahtar yalnızca istek başlığında yaşar; konfigürasyonda boş placeholder durur, log'a hiç yazılmaz.
+
+### Notlar / dikkat
+- **Gerçek anahtarla henüz denenmedi.** AbuseIPDB'den ücretsiz anahtar alıp `dotnet user-secrets set "Detection:IpReputation:ApiKey" "..."` ile tanımlanmalı. Anahtar olmadan sistem sorunsuz çalışır, yalnızca skor alanı boş kalır.
+- Ücretsiz tier günde 1.000 sorgu verir. Önbellek ve özel IP elemesi sayesinde bu limit normal kullanımda sorun olmaz, ama çok sayıda farklı IP'den alarm üreten bir ortamda kota tükenebilir.
+- **Yalnızca trafik anomalisi kuralına bağlandı** (prompt'ta böyle istendi). Brute-force alarmlarına eklemek tek satırlık bir değişiklik; başarısız giriş denemelerinde de kaynak IP'nin itibarı bilinmek istenirse yapılabilir.
+- Skor alarm kaydında ve açıklama metninde görünüyor; alarm tablosunda ayrı bir sütun olarak gösterilmiyor.
+- İtibar sorgusu alarm üretimini **en fazla 5 saniye** geciktirebilir. Bu süre yalnızca önbellekte olmayan bir adres için ve yalnızca dış servis yavaşsa yaşanır. Sıfır gecikme isteniyorsa alarm önce skorsuz kaydedilip arka planda zenginleştirilmelidir; bu iki DB yazımı ve ek karmaşıklık demektir.

@@ -117,6 +117,38 @@ Bellek iki şekilde korunur: `IdleRetention` süresidir görülmeyen sayaçlar p
 > Sayaçlar bellek içidir: Api yeniden başlarsa sıfırlanır ve birden fazla Api örneğinde her biri
 > kendi sayacını tutar. Yatay ölçeklemede paylaşılan bir sayaç (ör. Redis) gerekir.
 
+### IP itibar sorgusu (AbuseIPDB) — opsiyonel
+
+Trafik anomalisi alarmı üretilirken kaynak IP, [AbuseIPDB](https://www.abuseipdb.com/)'de sorgulanır
+ve 0-100 arası kötüye kullanım skoru alarma işlenir.
+
+Bu bir **zenginleştirmedir, bağımlılık değil**: AbuseIPDB yanıt vermezse, yavaşsa veya anahtar
+tanımlı değilse **alarm yine de üretilir**, yalnızca skor alanı boş kalır. Bekleme süresi en fazla
+5 saniyedir (`TotalRequestTimeout`); devre kesici açıldığında bu süre ~100 ms'ye düşer.
+
+Kota koruması iki katmanlıdır: aynı adres `CacheDuration` süresince tekrar sorgulanmaz ve özel ağ
+(10.x, 172.16-31.x, 192.168.x), loopback, link-local, CGNAT adresleri hiç sorgulanmaz.
+
+**API anahtarı asla appsettings.json'a yazılmaz.** Geliştirmede:
+
+```bash
+dotnet user-secrets set "Detection:IpReputation:ApiKey" "ANAHTARINIZ" --project src/ServerGuard.Api
+```
+
+Production'da `Detection__IpReputation__ApiKey` ortam değişkeni kullanılır.
+
+| Anahtar (`Detection:IpReputation`) | Açıklama | Varsayılan |
+|---|---|---|
+| `Enabled` | Sorguyu aç/kapat | `true` |
+| `ApiKey` | AbuseIPDB anahtarı — **yalnızca sır deposundan** | — |
+| `BaseAddress` | Servis adresi | `https://api.abuseipdb.com/api/v2/` |
+| `MaxAgeInDays` | Kaç günlük rapor geçmişi dikkate alınsın | `90` |
+| `CacheDuration` | Aynı adresin tekrar sorgulanmayacağı süre | `01:00:00` |
+| `CachedIpLimit` | Önbellekte tutulacak en fazla adres | `10000` |
+
+> Ücretsiz tier günde 1.000 sorgu verir. Anahtar tanımlamazsanız sistem sorunsuz çalışır,
+> yalnızca skor alanı boş kalır.
+
 ### Alarm sorgulama
 
 ```bash
