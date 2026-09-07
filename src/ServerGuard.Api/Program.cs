@@ -6,6 +6,7 @@ using ServerGuard.Api.Data;
 using ServerGuard.Api.Detection;
 using ServerGuard.Api.ErrorHandling;
 using ServerGuard.Api.Realtime;
+using ServerGuard.Api.Reputation;
 using ServerGuard.Api.Validation;
 using ServerGuard.Shared;
 
@@ -24,6 +25,7 @@ builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddValidatorsFromAssemblyContaining<ServerMetricDtoValidator>();
 builder.Services.AddPersistence(builder.Configuration);
+builder.Services.AddIpReputation(builder.Configuration);
 builder.Services.AddDetection(builder.Configuration);
 builder.Services.AddRealtime();
 builder.Services.AddWebClientCors(builder.Configuration);
