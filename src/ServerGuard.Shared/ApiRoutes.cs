@@ -11,6 +11,7 @@ public static class ApiRoutes
     public const string SecurityEvents = "/api/security-events";
     public const string Alerts = "/api/alerts";
     public const string TrafficLogs = "/api/traffic";
+    public const string Reports = "/api/reports";
     public const string MonitoringHub = "/hubs/monitoring";
 
     /// <summary>Controller içinde kullanılan göreli yol parçaları.</summary>
@@ -18,6 +19,9 @@ public static class ApiRoutes
 
     public const string TopClientIpsSegment = "top-ips";
 
+    public const string SummarySegment = "summary";
+
     public const string TrafficTimeline = $"{TrafficLogs}/{TimelineSegment}";
     public const string TopClientIps = $"{TrafficLogs}/{TopClientIpsSegment}";
+    public const string ReportSummary = $"{Reports}/{SummarySegment}";
 }

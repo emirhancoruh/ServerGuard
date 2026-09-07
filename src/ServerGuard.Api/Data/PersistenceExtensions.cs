@@ -29,6 +29,7 @@ public static class PersistenceExtensions
         services.AddScoped<ISecurityAlertRepository, SecurityAlertRepository>();
         services.AddScoped<ITrafficLogRepository, TrafficLogRepository>();
         services.AddScoped<IServerRepository, ServerRepository>();
+        services.AddScoped<IReportRepository, ReportRepository>();
 
         services.AddHealthChecks().AddDbContextCheck<ServerGuardDbContext>();
 
