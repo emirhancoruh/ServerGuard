@@ -149,6 +149,45 @@ Production'da `Detection__IpReputation__ApiKey` ortam değişkeni kullanılır.
 > Ücretsiz tier günde 1.000 sorgu verir. Anahtar tanımlamazsanız sistem sorunsuz çalışır,
 > yalnızca skor alanı boş kalır.
 
+## Alarm bildirimleri (Telegram) — opsiyonel
+
+Önem derecesi `MinimumSeverity` (varsayılan `High`) ve üzerindeki alarmlar Telegram'a bildirilir.
+
+Bildirim **ana akıştan tamamen ayrıdır**: alarm üretildiğinde yalnızca bir kuyruğa bırakılır,
+gönderimi ayrı bir arka plan servisi yapar. Telegram yavaş olsa, hata dönse veya hiç yanıt
+vermese bile **alarmı kaydeden istek beklemez ve kayıt geri alınmaz**; hata yalnızca loglanır.
+
+```
+Tespit kuralı → kuyruk (sınırlı) → arka plan servisi → Telegram
+```
+
+**Bot token'ı ve chat kimliği asla appsettings.json'a yazılmaz.** [BotFather](https://t.me/botfather)
+ile bot oluşturduktan sonra:
+
+```bash
+dotnet user-secrets set "Notifications:Telegram:BotToken" "TOKENINIZ" --project src/ServerGuard.Api
+```
+
+```bash
+dotnet user-secrets set "Notifications:Telegram:ChatId" "SOHBET_KIMLIGI" --project src/ServerGuard.Api
+```
+
+Production'da `Notifications__Telegram__BotToken` ve `Notifications__Telegram__ChatId` ortam
+değişkenleri kullanılır.
+
+| Anahtar (`Notifications:Telegram`) | Açıklama | Varsayılan |
+|---|---|---|
+| `Enabled` | Bildirimi aç/kapat | `true` |
+| `BotToken` | Bot token'ı — **yalnızca sır deposundan** | — |
+| `ChatId` | Hedef sohbet kimliği — **yalnızca sır deposundan** | — |
+| `MinimumSeverity` | Bu seviyeden itibaren bildirilir | `High` |
+| `QueueCapacity` | Telegram erişilemezken bekletilecek en fazla bildirim | `500` |
+
+> Telegram, bot token'ını URL yolunda taşır. Token'ın log dosyalarına sızmaması için bu
+> istemcide HttpClient'ın varsayılan istek günlüğü kapatılmıştır.
+
+> Token tanımlamazsanız sistem sorunsuz çalışır, yalnızca bildirim gönderilmez.
+
 ### Alarm sorgulama
 
 ```bash

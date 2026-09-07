@@ -759,3 +759,66 @@ Gerçek AbuseIPDB anahtarı olmadığı için başarı yolu, AbuseIPDB'nin `/che
 - **Yalnızca trafik anomalisi kuralına bağlandı** (prompt'ta böyle istendi). Brute-force alarmlarına eklemek tek satırlık bir değişiklik; başarısız giriş denemelerinde de kaynak IP'nin itibarı bilinmek istenirse yapılabilir.
 - Skor alarm kaydında ve açıklama metninde görünüyor; alarm tablosunda ayrı bir sütun olarak gösterilmiyor.
 - İtibar sorgusu alarm üretimini **en fazla 5 saniye** geciktirebilir. Bu süre yalnızca önbellekte olmayan bir adres için ve yalnızca dış servis yavaşsa yaşanır. Sıfır gecikme isteniyorsa alarm önce skorsuz kaydedilip arka planda zenginleştirilmelidir; bu iki DB yazımı ve ek karmaşıklık demektir.
+
+---
+
+## Prompt 13 — Telegram bildirimi (2026-09-07)
+
+### Ne istendi
+Severity'si High olan her yeni alarm için Telegram Bot API üzerinden (token sır deposundan) önceden tanımlı bir sohbete bildirim gönderen `TelegramNotificationService`. Gönderimi alarm kaydedilme akışına **event-based** bağla, servisi controller'a gömme. Telegram gönderimi başarısız olursa alarmın DB'ye kaydedilmesini etkilemesin; hata sadece loglansın, kayıt geri alınmasın.
+
+### Ne yapıldı
+
+**Olay tabanlı ayrıştırma.** Prompt 12'de itibar sorgusu ana akışta bekletiliyordu (en fazla 5 sn). Burada bu tuzağa düşmemek için gerçek bir ayrıştırma yapıldı:
+
+```
+Tespit kuralı → IAlertEventPublisher.Publish()   [senkron, mikrosaniye]
+                        ↓
+              sınırlı Channel<SecurityAlertDto>
+                        ↓
+        AlertNotificationWorker : BackgroundService
+                        ↓
+              IAlertNotifier → TelegramNotificationService
+```
+
+`Publish` yalnızca kuyruğa yazıp döner. Gerçek gönderim ayrı bir arka plan servisinde yapılır; dış servisin yavaşlığı isteği **hiç** bekletmez. Kuyruk sınırlıdır (`DropOldest`), dolarsa en eski bildirim loglanarak atılır.
+
+**`AlertRaiser` (refactor).** Her tespit kuralı aynı üç adımı (kaydet, panele yayınla, bildirim kuyruğuna bırak) tekrarlıyordu. Üçüncü adım eklenince bu tekrar riskli hale geldi: yeni bir kural bir adımı unutabilirdi. Adımlar `IAlertRaiser` arkasına toplandı; kurallar artık yalnızca "şu alarmı üret" diyor.
+
+**`IAlertNotifier`.** Worker, kayıtlı tüm bildiricileri dolaşır. E-posta veya webhook eklemek için tek bir DI kaydı yeterli; worker değişmez (OCP).
+
+**Severity eşiği yapılandırılabilir.** Prompt "High" diyor, ama `MinimumSeverity` olarak modellendi (varsayılan `High`). Böylece High **ve** Critical bildirilir. Sabit "yalnızca High" yazılsaydı, ileride Critical üreten bir kural eklendiğinde en ciddi alarmlar sessizce atlanırdı.
+
+**Güvenlik — token sızıntısı.** Telegram token'ı URL yolunda taşınır (`/bot<token>/sendMessage`). HttpClient'ın varsayılan günlükleyicisi istek URI'sini yazdığından **token log dosyalarına sızardı.** Bu istemcide `RemoveAllLoggers()` ile varsayılan günlükleme kapatıldı; gönderim sonucu URI içermeyen kendi log satırlarımızla raporlanıyor. Ek olarak Serilog'da `System.Net.Http.HttpClient` ve `Polly` seviyeleri `Warning`'e çekildi.
+
+**Mesaj biçimi.** HTML parse mode kullanıldığı için dışarıdan gelen değerler (sunucu adı, IP, açıklama) kaçırılıyor; aksi halde `<` içeren bir açıklama mesajı bozardı.
+
+### Doğrulama
+
+Telegram Bot API'sini taklit eden, gelen mesajları ve token'ı kaydeden, istenirse yavaşlayan/hata dönen bir test sunucusu yazıldı.
+
+| Test | Sonuç |
+|---|---|
+| `dotnet build` / `ng build` / 14 vitest | Hepsi geçti, 0 uyarı |
+| High alarm (brute-force) | Bildirim gönderildi, mesaj doğru biçimlendi |
+| **Telegram 30 saniye askıda** | **Alarm isteği 114 ms sürdü** — hiç beklemedi |
+| **Telegram 500 hatası** | İstek 112 ms, **alarm DB'de kaldı** (kayıt geri alınmadı) |
+| **Medium alarm** (trafik anomalisi) | Bildirim gönderilmedi, sayaç değişmedi |
+| **Token log'da geçiyor mu** | **0 kez** — sızıntı yok |
+| Token Telegram'a ulaştı mı | Evet (URL'de gitmesi gerekiyor) |
+
+**Yol boyunca bulunan gerçek hata:** İlk denemede gönderim `NotSupportedException: The 'bot123456' scheme is not supported` ile düştü. Sebebi: Telegram token'ı `<bot_id>:<secret>` biçiminde olduğu için **iki nokta içerir**; göreli yol baştaki eğik çizgi olmadan verildiğinde URI ayrıştırıcısı `bot123456`'yı bir şema sanıyor. Yol kök göreli (`/bot...`) hale getirilerek düzeltildi. Bu hata gerçek bir token'la kesinlikle patlardı; test sunucusuna gerçekçi biçimde (iki noktalı) bir token verildiği için yakalandı.
+
+### Öğrenilen kavramlar
+- **Olay tabanlı ayrıştırma (event-based decoupling)**: "yan etkiyi ana akıştan ayır" ilkesinin somut hali. Kuyruğa yazmak mikrosaniye sürer; ne kadar yavaş olursa olsun dış servis çağıranı bekletemez.
+- **Sınırlı kanal (bounded channel)**: üretici tüketiciden hızlıysa ne olacağına önceden karar vermek. Sınırsız kuyruk, gecikmiş bir çöküştür.
+- **Zaman bütçesinin yer değiştirmesi**: bildirim arka planda olduğu için retry/timeout değerleri cömert tutulabildi (toplam 45 sn). Kimseyi bekletmiyorsak ısrarla denemek mantıklıdır — Prompt 12'deki 5 saniyelik cimri bütçenin tam tersi, ve sebebi aynı: kimin beklediği.
+- **Sır sızıntısının beklenmedik yolu**: sır yalnızca konfigürasyonda değil, **URL'de de** olabilir. Kütüphanelerin varsayılan günlüklemesi bunu farkında olmadan diske yazar.
+- **URI ayrıştırma tuzağı**: göreli bir yolun ilk segmentinde iki nokta varsa şema olarak yorumlanır. Token, kimlik veya zaman içeren yollarda sık rastlanan bir hata.
+- **Yapılandırılabilir eşik vs sabit koşul**: "yalnızca High" yazmak bugün doğru, yarın sessiz bir hata. Minimum seviye modellemek her iki durumu da karşılar.
+
+### Notlar / dikkat
+- **Gerçek bot ile henüz denenmedi.** BotFather'dan bot oluşturup token ve chat kimliği alınmalı: `dotnet user-secrets set "Notifications:Telegram:BotToken" "..."` ve `"Notifications:Telegram:ChatId" "..."`. Tanımlanmazsa sistem sorunsuz çalışır, yalnızca bildirim gönderilmez.
+- Telegram sohbet başına saniyede ~1 mesaj sınırı uygular. Çok sayıda High alarm aynı anda üretilirse 429 alınabilir; bu durumda bildirim düşer (loglanır), alarm kaydı etkilenmez. Yoğun ortamlarda alarmları gruplayıp tek mesajda göndermek gerekebilir.
+- Kuyruk bellek içidir: Api yeniden başlarsa gönderilmemiş bildirimler kaybolur. Alarmın kendisi veritabanındadır, yalnızca bildirim kaybolur.
+- Şu an tek kanal var. E-posta/webhook eklemek `IAlertNotifier` uygulayıp DI'a kaydetmekten ibaret.
