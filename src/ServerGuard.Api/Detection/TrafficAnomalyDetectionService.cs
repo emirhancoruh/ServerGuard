@@ -1,9 +1,6 @@
 using System.Globalization;
 using Microsoft.Extensions.Options;
 using ServerGuard.Api.Data.Entities;
-using ServerGuard.Api.Mapping;
-using ServerGuard.Api.Realtime;
-using ServerGuard.Api.Repositories;
 using ServerGuard.Api.Reputation;
 using ServerGuard.Shared;
 using ServerGuard.Shared.Dtos;
@@ -40,8 +37,7 @@ namespace ServerGuard.Api.Detection;
 /// </remarks>
 public sealed class TrafficAnomalyDetectionService(
     ITrafficWindowStore windowStore,
-    ISecurityAlertRepository alertRepository,
-    IMonitoringBroadcaster broadcaster,
+    IAlertRaiser alertRaiser,
     IIpReputationService ipReputation,
     IOptions<TrafficAnomalyOptions> options,
     TimeProvider timeProvider,
@@ -104,22 +100,19 @@ public sealed class TrafficAnomalyDetectionService(
             AbuseConfidenceScore = abuseConfidenceScore
         };
 
-        // Önce kaydedilir; yayınlanan alarm kalıcı Id'yi taşır, böylece panel canlı gelen
-        // alarmla geçmiş sorgusundan geleni aynı kayıt olarak eşleyebilir.
-        var saved = await alertRepository.AddAsync(alert, cancellationToken);
+        var raised = await alertRaiser.RaiseAsync(alert, cancellationToken);
 
         logger.LogWarning(
             "Traffic anomaly alert raised. AlertId={AlertId} Server={ServerName} ClientIp={ClientIp} " +
             "Requests={Requests} Window={Window} AbuseScore={AbuseScore} TrackedIps={TrackedIps}",
-            saved.Id,
-            saved.ServerName,
-            saved.SourceIp,
+            raised.Id,
+            raised.ServerName,
+            raised.SourceIp,
             requestsInWindow,
             _options.Window,
             abuseConfidenceScore,
             windowStore.TrackedCount);
 
-        await broadcaster.BroadcastAlertAsync(saved.ToDto(), cancellationToken);
     }
 
     private string BuildDescription(string clientIp, int requestsInWindow, int? abuseConfidenceScore)

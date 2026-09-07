@@ -1,9 +1,6 @@
 using System.Globalization;
 using Microsoft.Extensions.Options;
 using ServerGuard.Api.Data.Entities;
-using ServerGuard.Api.Mapping;
-using ServerGuard.Api.Realtime;
-using ServerGuard.Api.Repositories;
 using ServerGuard.Shared;
 using ServerGuard.Shared.Dtos;
 using ServerGuard.Shared.Enums;
@@ -16,8 +13,7 @@ namespace ServerGuard.Api.Detection;
 /// </summary>
 public sealed class BruteForceDetectionService(
     IFailureWindowStore windowStore,
-    ISecurityAlertRepository alertRepository,
-    IMonitoringBroadcaster broadcaster,
+    IAlertRaiser alertRaiser,
     IOptions<BruteForceOptions> options,
     TimeProvider timeProvider,
     ILogger<BruteForceDetectionService> logger) : IBruteForceDetectionService
@@ -73,19 +69,16 @@ public sealed class BruteForceDetectionService(
             CreatedAt = detectedAt
         };
 
-        // Önce kaydedilir; yayınlanan alarm kalıcı Id'yi taşır, böylece panel canlı gelen
-        // alarmla geçmiş sorgusundan geleni aynı kayıt olarak eşleyebilir.
-        var saved = await alertRepository.AddAsync(alert, cancellationToken);
+        var raised = await alertRaiser.RaiseAsync(alert, cancellationToken);
 
         logger.LogWarning(
             "Brute-force alert raised. AlertId={AlertId} Server={ServerName} SourceIp={SourceIp} Attempts={Attempts} Window={Window}",
-            saved.Id,
-            saved.ServerName,
-            saved.SourceIp,
+            raised.Id,
+            raised.ServerName,
+            raised.SourceIp,
             attemptsInWindow,
             _options.Window);
 
-        await broadcaster.BroadcastAlertAsync(saved.ToDto(), cancellationToken);
     }
 
     private string BuildDescription(string sourceIp, int attemptsInWindow)

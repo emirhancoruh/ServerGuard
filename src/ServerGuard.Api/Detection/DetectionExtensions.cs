@@ -20,6 +20,7 @@ public static class DetectionExtensions
         services.AddSingleton<IFailureWindowStore, MemoryCacheFailureWindowStore>();
         services.AddSingleton<ITrafficWindowStore, TrafficWindowStore>();
 
+        services.AddScoped<IAlertRaiser, AlertRaiser>();
         services.AddScoped<IBruteForceDetectionService, BruteForceDetectionService>();
         services.AddScoped<ITrafficAnomalyDetectionService, TrafficAnomalyDetectionService>();
 
