@@ -822,3 +822,70 @@ Telegram Bot API'sini taklit eden, gelen mesajları ve token'ı kaydeden, isteni
 - Telegram sohbet başına saniyede ~1 mesaj sınırı uygular. Çok sayıda High alarm aynı anda üretilirse 429 alınabilir; bu durumda bildirim düşer (loglanır), alarm kaydı etkilenmez. Yoğun ortamlarda alarmları gruplayıp tek mesajda göndermek gerekebilir.
 - Kuyruk bellek içidir: Api yeniden başlarsa gönderilmemiş bildirimler kaybolur. Alarmın kendisi veritabanındadır, yalnızca bildirim kaybolur.
 - Şu an tek kanal var. E-posta/webhook eklemek `IAlertNotifier` uygulayıp DI'a kaydetmekten ibaret.
+
+---
+
+## Prompt 14 — Geçmiş raporlama ve CSV dışa aktarma (2026-09-07)
+
+### Ne istendi
+`GET /api/reports/summary?serverName=&from=&to=`: belirtilen aralıkta toplam istek, ortalama CPU/RAM ve tipe göre alarm kırılımı. Tarih aralığına makul bir üst sınır (ör. 90 gün) koy ki büyük veri setlerinde sorgu veritabanını kilitleyip sistemi yavaşlatmasın. Panele basit bir rapor ekranı ekle, veriyi tablo halinde göster, CSV dışa aktarma düğmesi koy.
+
+### Ne yapıldı
+
+**Endpoint.** Üç toplama sorgusu: trafik sayımı, metrik ortalamaları, tipe göre alarm kırılımı. Hepsi veritabanında yapılıyor, hiçbir satır belleğe çekilmiyor.
+
+**Veritabanını koruma — üç katman:**
+- **90 günlük üst sınır** (istendiği gibi). Aşılırsa 400 dönüyor, sessizce kırpılmıyor.
+- **30 saniyelik komut zaman aşımı.** Beklenmedik biçimde uzayan bir rapor sorgusu, veri yazan agent'ları süresiz bekletmek yerine iptal ediliyor.
+- **`AsNoTracking()`** — salt okunur sorguda değişiklik takibi gereksiz maliyet.
+
+**Ortalamalar nullable.** Aralıkta hiç ölçüm yoksa `null` dönüyor, sıfır değil. Prompt 12'deki `AbuseConfidenceScore` kararıyla aynı gerekçe: "ölçüm yok" ile "ortalama sıfır" farklı şeyler; sıfırla doldurmak, veri yokluğunu bir bulguymuş gibi gösterir. Ekranda "Ölçüm yok" yazıyor. Ayrıca `MetricSampleCount` dönülüyor: ortalamanın kaç ölçüme dayandığını bilmek güvenilirliğin göstergesi.
+
+Boş küme için `AverageAsync` sorun çıkarır; onun yerine tek gruba indirgeyen bir projeksiyon kullanıldı. Hiç satır yoksa grup oluşmuyor ve sonuç `null` geliyor.
+
+**Rapor ekranı.** Panel artık iki sekmeli: **Panel** ve **Rapor**. Rapor ekranında tarih aralığı seçicileri, sunucu seçici (mevcut `ServerSelectionService` yeniden kullanıldı), tablo ve CSV düğmesi var. Aralık sınırı **istemcide de** kontrol ediliyor: 90 günü aşan veya ters bir aralıkta düğme pasifleşiyor ve sebep yazılıyor — kullanıcı hatayı sunucuya gidip dönmeden görüyor.
+
+**CSV dışa aktarma.** Tablo satırları ve CSV **aynı kaynaktan** (`rows` computed) üretiliyor; ekranda görünen ile dosyaya yazılan birbirinden ayrışamaz.
+
+İki pratik ayrıntı:
+- **UTF-8 BOM** eklendi. Excel bu işaret olmadan dosyayı yerel kod sayfasıyla açar ve Türkçe karakterler bozulur.
+- **Noktalı virgül ayırıcı.** Excel'in Türkçe yerel ayarında virgül ondalık ayırıcıdır; virgülle ayrılmış dosya tek sütunda açılır.
+- Alanlar RFC 4180'e göre kaçırılıyor (ayırıcı/tırnak/satır sonu içeren değerler tırnaklanıyor, içteki tırnaklar ikileniyor).
+
+### Doğrulama
+
+| Test | Sonuç |
+|---|---|
+| `dotnet build` / `ng build` / 14 vitest | Hepsi geçti, 0 uyarı |
+| Varsayılan çağrı (7 gün) | 500 istek, CPU 40, RAM 60, 500 ölçüm, 4 alarm (2+2 kırılım) |
+| `serverName=web-01` | 250 istek, CPU **20**, RAM **40**, 3 alarm — ekilen veriyle birebir |
+| `serverName=db-01` | 250 istek, CPU **60**, RAM **80**, 1 alarm |
+| **Veri olmayan aralık (2020)** | İstek 0, ortalamalar **null** (sıfır değil), ölçüm 0 |
+| **120 günlük aralık** | 400 — "Tarih aralığı en fazla 90 gün olabilir." |
+| **`from > to`** | 400 |
+| Tam 90 gün | Geçti (sınır dahil) |
+| Ekranda sunucu filtresi | db-01 seçilince tablo 250/60/80'e döndü |
+| **CSV içeriği** | Dosya adı, MIME tipi, noktalı virgül ayırıcı ve satırlar doğru |
+| **CSV baytları** | İlk üç bayt `EF BB BF` — BOM doğru |
+| **Arayüz sınırı: 120 gün** | Hata mesajı çıktı, düğme pasifleşti |
+| **Arayüz: ters aralık** | Hata mesajı çıktı, düğme pasifleşti |
+| Arayüz: geçerli 37 gün | Hata yok, düğme aktif |
+| Sekme geçişi Panel ↔ Rapor | Yönlendirme ve aktif sekme doğru |
+| Konsol | Hata yok |
+
+**Test sırasında düzeltilen bir yanılgı:** CSV'de BOM'u `Blob.text()` ile kontrol ettim ve "yok" sonucu aldım. Sebep koddaki bir eksiklik değil: `Blob.text()` spec gereği baştaki BOM'u kırpıyor. Baytlara doğrudan bakınca `EF BB BF` göründü. Yanlış bir test, doğru koda "hatalı" dedirtebiliyor.
+
+### Öğrenilen kavramlar
+- **Toplama sorgularının maliyeti**: `COUNT`/`AVG` tüm aralığı taramak zorundadır. Sayfalamayla sınırlanamaz; tek koruma aralığın kendisini sınırlamaktır.
+- **Komut zaman aşımı**: sorgu süresini sınırlamak, kilitlerin ne kadar tutulacağını da sınırlar. Yazma yapan sistemlerde okuma sorgusunun süresi başkasının problemi olur.
+- **Boş kümenin ortalaması yoktur**: `AVG` boş kümede `NULL` döner. Bunu sıfıra çevirmek veriyi çarpıtır.
+- **Örnek sayısını da vermek**: "%40 ortalama" tek başına eksik bilgidir; 3 ölçüme mi 3000 ölçüme mi dayandığı kararı değiştirir.
+- **Çift taraflı doğrulama**: aynı kural hem istemcide (hızlı geri bildirim) hem sunucuda (asıl koruma) uygulanır. İstemci doğrulaması bir kolaylıktır, güvenlik sınırı değildir.
+- **Tek kaynaktan üretim**: ekrandaki tablo ile CSV aynı diziden türetildiğinde "ekranda başka, dosyada başka" hatası yapısal olarak imkânsız hale gelir.
+- **CSV'nin yerelleşmesi**: BOM ve ayırıcı seçimi teknik değil kullanıcı sorunudur. Excel'de bozuk açılan bir dosya, üretilmemiş sayılır.
+
+### Notlar / dikkat
+- Rapor **anlık hesaplanıyor**, önbelleklenmiyor. Tablolar büyüdükçe 90 günlük bir sorgu yavaşlayabilir; o noktada günlük özetleri önceden hesaplayıp saklamak (rollup tablosu) gerekir.
+- Özet şu an **sabit alanlar** içeriyor. Sunucu bazında kırılım, saatlik dağılım veya en çok alarm üreten IP'ler gibi ayrıntılar yok.
+- CSV **tarayıcıda** üretiliyor; ekranda görünen özetin birebir kopyası. Ham kayıtları (tüm trafik satırları) dışa aktarmak isteniyorsa bu, sunucu tarafında akış (streaming) gerektirir — tarayıcıda üretilemez.
+- Tarih seçicileri **yerel gün** sınırlarını kullanıyor: başlangıç 00:00:00, bitiş 23:59:59.999 olarak UTC'ye çevriliyor. Sunucuların farklı zaman diliminde olduğu bir kurulumda bu ayrıntı gözden geçirilmeli.

@@ -54,6 +54,7 @@ Controller  →  IValidator (FluentValidation)  →  IRepository  →  DbContext
 | `POST` | `/api/traffic` | `TrafficLogDto` kaydeder ve panele yayınlar | 201 `{ id }` / 400 doğrulama hatası |
 | `GET` | `/api/traffic/timeline` | İstek sayısını zaman dilimlerine bölerek döner | 200 dizi / 400 doğrulama hatası |
 | `GET` | `/api/traffic/top-ips` | En çok istek gönderen adresler | 200 dizi / 400 doğrulama hatası |
+| `GET` | `/api/reports/summary` | Tarih aralığının özeti (istek, ortalama CPU/RAM, alarm kırılımı) | 200 özet / 400 doğrulama hatası |
 | `WS` | `/hubs/monitoring` | SignalR hub. `ReceiveMetric`, `ReceiveSecurityEvent` ve `ReceiveAlert` event'lerini yayınlar | — |
 
 Enum'lar JSON'da adlarıyla taşınır (`"eventType": "FailedLogin"`); sayısal değerler de kabul edilir.
@@ -222,6 +223,28 @@ curl "http://localhost:5190/api/traffic/top-ips?serverName=web-01&minutes=60&tak
 | `take` | Kaç adres döneceği (top-ips) | `10` | 1-100 |
 
 Zaman serisinde istek gelmeyen dilimler de sıfır sayacıyla döner; grafikte kopukluk oluşmaz.
+
+### Rapor
+
+```bash
+curl "http://localhost:5190/api/reports/summary?serverName=web-01&from=2026-08-01T00:00:00Z&to=2026-09-01T00:00:00Z"
+```
+
+Aralıktaki toplam istek sayısını, ortalama CPU/RAM değerlerini ve tipe göre alarm kırılımını döner.
+
+| Parametre | Açıklama | Varsayılan | Sınır |
+|---|---|---|---|
+| `serverName` | Tek sunucuya filtrele | tümü | — |
+| `from` | Başlangıç (ISO 8601) | `to` - 7 gün | — |
+| `to` | Bitiş (ISO 8601) | şu an | — |
+
+> **Tarih aralığı en fazla 90 gündür.** Rapor sorguları toplama yapar ve tüm aralığı taramak
+> zorundadır; sınır, tek bir isteğin veritabanını uzun süre meşgul edip veri yazan agent'ları
+> bekletmesini engeller. Aşılırsa istek sessizce kırpılmaz, **400** döner. Ayrıca sorgulara
+> 30 saniyelik komut zaman aşımı uygulanır.
+
+> Aralıkta hiç metrik toplanmadıysa ortalamalar `null` döner, sıfır değil. Yanıt ayrıca
+> `metricSampleCount` içerir: ortalamanın kaç ölçüme dayandığını bilmek güvenilirliğin göstergesidir.
 
 Panelin hub'a erişebilmesi için origin'i `Cors:AllowedOrigins` altında tanımlı olmalıdır (varsayılan `http://localhost:4200`).
 
@@ -412,6 +435,17 @@ Angular paneli hub'a bağlanır ve şunları gösterir:
   sayacını artırır. Yükleme ve hata durumları için ayrı görünüm, hata halinde "yeniden dene" düğmesi.
 - **En çok istek atan IP'ler** — ilk 10 adres, oran çubuklarıyla.
 - **Güvenlik alarmları** — en yeni üstte, önem derecesine göre renk kodlu.
+
+Panel iki sekmelidir: **Panel** (canlı izleme) ve **Rapor** (geçmiş özet).
+
+### Rapor ekranı
+
+Tarih aralığı ve sunucu seçilip özet tablo halinde görüntülenir, **CSV olarak indirilebilir**.
+Aralık sınırı istemcide de kontrol edilir: 90 günü aşan veya ters bir aralıkta düğme pasifleşir
+ve sebep gösterilir.
+
+> CSV dosyası UTF-8 BOM ile ve noktalı virgül ayırıcıyla üretilir; Excel'in Türkçe yerel
+> ayarında sütunlar doğru ayrışsın ve Türkçe karakterler bozulmasın diye.
 Açılışta geçmiş alarmlar `GET /api/alerts` ile yüklenir; sonrasında yeni alarmlar hub üzerinden
 listenin başına eklenir. Hub'dan bozuk bir kayıt gelirse yalnızca o kayıt atlanır, liste çalışmaya devam eder.
 Bağlantı koparsa ekran donmaz: son bilinen değerler kalır, rozet "Yeniden bağlanıyor" olur ve
