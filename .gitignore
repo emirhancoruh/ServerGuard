@@ -495,3 +495,6 @@ traffic-offset.json.tmp
 # Yerel geliştirici ayarları (sır içerebilir).
 appsettings.Local.json
 appsettings.*.Local.json
+
+# Angular panelinin API icine kopyalandigi klasor; yayin sirasinda uretilir.
+src/ServerGuard.Api/wwwroot/
