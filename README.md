@@ -30,6 +30,30 @@ anahtarı hiçbir sorgu ucunu açmaz, panel token'ı hiçbir veri yazamaz.
 | `ServerGuard.Web` | Angular 21 | Monitoring paneli. Hub'a bağlanır, her sunucu için CPU/RAM gauge'larını canlı günceller. |
 | `ServerGuard.Tools` | Konsol uygulaması | Kurulum sırlarını üretir ve çalışan bir API'yi dışarıdan doğrular. Sistemin çalışması için gerekli değildir. |
 
+### Kapsam: neyi izliyoruz, neyi izlemiyoruz
+
+Beklenti kurmak için açıkça yazmak gerekir. Agent kurulu her sunucuda **toplananlar**:
+
+| Veri | Kapsam |
+|---|---|
+| CPU / RAM / en dolu diskin boş alanı | Makinenin tamamı — servis bazında değil |
+| Başarılı ve başarısız oturum açma (4624/4625) | Makinenin tamamı |
+| HTTP trafiği: istek yolu, durum kodu, yanıt süresi, istemci IP | **Tüm IIS siteleri** (`Agent:Traffic:LogRoot` dolduğunda) |
+
+**Toplanmayanlar** — bunları bu sistemden beklemeyin:
+
+| Eksik | Sonucu |
+|---|---|
+| İsteğin hangi IIS **sitesine** ait olduğu | Siteler yalnızca istek yoluna göre ayrışır; aynı yolu kullanan iki site tek satırda birleşir |
+| Servislerin kendi uygulama log'ları | HTTP 500 sayısı görünür, ama hatanın sebebi görünmez |
+| Uygulama havuzu / Windows servis durumu | "Havuz durdu" bilgisi yok; yalnızca trafiğin kesilmesinden dolaylı anlaşılır |
+| Süreç bazında CPU/RAM | "Hangi servis CPU yiyor" sorusunun cevabı yok |
+| SQL Server metrikleri | Yok |
+
+IIS trafiğinin toplanabilmesi için her sitenin log biçimi **W3C** olmalı ve `time-taken` alanı
+seçili olmalıdır; biri eksikse o sitenin satırları atlanır. Kurulum sırasında doğrulama adımı için
+bkz. [docs/YAYINLAMA.md](docs/YAYINLAMA.md).
+
 ### Bağımlılık yönü
 
 `Agent → Shared ← Api`. Agent ve Api birbirine referans vermez; yalnızca Shared üzerinden aynı sözleşmeyi konuşur.
