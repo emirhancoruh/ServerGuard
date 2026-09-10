@@ -8,7 +8,9 @@ export const ApiRoutes = {
   alerts: '/api/alerts',
   trafficTimeline: '/api/traffic/timeline',
   topClientIps: '/api/traffic/top-ips',
-  reportSummary: '/api/reports/summary'
+  reportSummary: '/api/reports/summary',
+  overview: '/api/overview',
+  serviceHealth: '/api/traffic/services'
 } as const;
 
 /** Hub'ın istemciye gönderdiği event adları (IMonitoringClient karşılığı). */

@@ -6,66 +6,22 @@
   <sg-server-selector class="server-selector" />
 </header>
 
-@if (servers().length === 0) {
-  <p class="empty">Henüz metrik gelmedi. Agent çalıştığında sunucular burada görünecek.</p>
-} @else {
+<sg-status-bar />
 
-  <section class="server-grid">
-    @for (server of servers(); track server.serverName) {
-      <article class="server-card">
-        <h2>{{ server.serverName }}</h2>
+<section class="section">
+  <h2 class="section-title">Sunucular</h2>
+  <sg-server-tiles />
+</section>
 
-        <div class="gauges">
-          <div class="gauge">
-            <dx-circular-gauge [value]="server.cpuUsagePercent">
-              <dxo-scale [startValue]="minPercent" [endValue]="maxPercent" [tickInterval]="20"></dxo-scale>
-              <dxo-range-container palette="Harmony Light">
-                <dxi-range [startValue]="minPercent" [endValue]="warningThreshold" color="#37b24d"></dxi-range>
-                <dxi-range [startValue]="warningThreshold" [endValue]="criticalThreshold" color="#f59f00"></dxi-range>
-                <dxi-range [startValue]="criticalThreshold" [endValue]="maxPercent" color="#e03131"></dxi-range>
-              </dxo-range-container>
-              <dxo-value-indicator type="triangleNeedle"></dxo-value-indicator>
-              <dxo-title text="CPU">
-                <dxo-font [size]="14"></dxo-font>
-              </dxo-title>
-              <dxo-tooltip [enabled]="true"></dxo-tooltip>
-              <dxo-animation [duration]="400"></dxo-animation>
-            </dx-circular-gauge>
-            <p class="reading">{{ server.cpuUsagePercent | number: '1.0-1' }}%</p>
-          </div>
+<section class="section">
+  <sg-service-health-table />
+</section>
 
-          <div class="gauge">
-            <dx-circular-gauge [value]="server.ramUsagePercent">
-              <dxo-scale [startValue]="minPercent" [endValue]="maxPercent" [tickInterval]="20"></dxo-scale>
-              <dxo-range-container palette="Harmony Light">
-                <dxi-range [startValue]="minPercent" [endValue]="warningThreshold" color="#37b24d"></dxi-range>
-                <dxi-range [startValue]="warningThreshold" [endValue]="criticalThreshold" color="#f59f00"></dxi-range>
-                <dxi-range [startValue]="criticalThreshold" [endValue]="maxPercent" color="#e03131"></dxi-range>
-              </dxo-range-container>
-              <dxo-value-indicator type="triangleNeedle"></dxo-value-indicator>
-              <dxo-title text="RAM">
-                <dxo-font [size]="14"></dxo-font>
-              </dxo-title>
-              <dxo-tooltip [enabled]="true"></dxo-tooltip>
-              <dxo-animation [duration]="400"></dxo-animation>
-            </dx-circular-gauge>
-            <p class="reading">{{ server.ramUsagePercent | number: '1.0-1' }}%</p>
-          </div>
-        </div>
-
-        <footer class="last-seen">
-          Son veri: {{ server.lastSeen | date: 'HH:mm:ss' }}
-        </footer>
-      </article>
-    }
-  </section>
-}
-
-<section class="traffic-section">
+<section class="section traffic-section">
   <sg-traffic-chart />
   <sg-top-ips-table />
 </section>
 
-<section class="alerts-section">
+<section class="section">
   <sg-alert-list />
 </section>

@@ -1,0 +1,43 @@
+<section class="status-bar" [class]="'status-bar--' + overallState()">
+  <div class="headline">
+    <span class="indicator" aria-hidden="true"></span>
+    <strong>{{ headline() }}</strong>
+    <span class="window">son {{ windowMinutes }} dk</span>
+  </div>
+
+  @if (overview(); as data) {
+    <dl class="kpis">
+      <div class="kpi">
+        <dt>İstek / dk</dt>
+        <dd>{{ data.requestsPerMinute | number: '1.0-1' }}</dd>
+      </div>
+
+      <div class="kpi" [class]="errorRateClass()">
+        <dt>Hata oranı (5xx)</dt>
+        <dd>%{{ data.errorRatePercent | number: '1.0-2' }}</dd>
+      </div>
+
+      <div class="kpi">
+        <dt>4xx / 5xx</dt>
+        <dd>{{ data.clientErrorCount | number }} / {{ data.serverErrorCount | number }}</dd>
+      </div>
+
+      <div class="kpi">
+        <dt>Ort. yanıt</dt>
+        <dd>{{ data.averageResponseTimeMs | number: '1.0-0' }} ms</dd>
+      </div>
+
+      <div class="kpi">
+        <dt>En yavaş</dt>
+        <dd>{{ data.maxResponseTimeMs | number }} ms</dd>
+      </div>
+
+      <div class="kpi" [class.kpi--warning]="data.highSeverityAlertCount > 0">
+        <dt>Alarm</dt>
+        <dd>{{ data.activeAlertCount | number }}</dd>
+      </div>
+    </dl>
+  } @else if (state() === 'error') {
+    <button type="button" class="retry" (click)="reload()">Yeniden dene</button>
+  }
+</section>

@@ -1,0 +1,59 @@
+<header class="section-header">
+  <h2>Servis Sağlığı</h2>
+  <span class="subtitle">son {{ windowMinutes }} dakika</span>
+  @if (unhealthyCount() > 0) {
+    <span class="badge">{{ unhealthyCount() }} sorunlu</span>
+  }
+</header>
+
+@switch (state()) {
+  @case ('loading') {
+    <p class="status status--loading">Servis verisi yükleniyor…</p>
+  }
+  @case ('error') {
+    <div class="status status--error">
+      <p>Servis verisi yüklenemedi.</p>
+      <button type="button" (click)="reload()">Yeniden dene</button>
+    </div>
+  }
+  @default {
+    @if (!hasRows()) {
+      <p class="status">Bu aralıkta istek kaydı yok.</p>
+    } @else {
+      <div class="table-scroll">
+        <table class="service-table">
+          <thead>
+            <tr>
+              <th scope="col">Servis</th>
+              <th scope="col" class="num">İstek</th>
+              <th scope="col" class="num">4xx</th>
+              <th scope="col" class="num">5xx</th>
+              <th scope="col" class="num">Hata %</th>
+              <th scope="col" class="num">Ort. ms</th>
+              <th scope="col" class="num">Maks ms</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of rows(); track row.serviceName) {
+              <tr [class]="rowClass(row)">
+                <th scope="row" class="service">{{ row.serviceName }}</th>
+                <td class="num">{{ row.requestCount | number }}</td>
+                <td class="num">{{ row.clientErrorCount | number }}</td>
+                <td class="num" [class]="errorRateClass(row)">{{ row.serverErrorCount | number }}</td>
+                <td class="num" [class]="errorRateClass(row)">
+                  {{ row.errorRatePercent | number: '1.0-1' }}
+                </td>
+                <td class="num" [class]="latencyClass(row.averageResponseTimeMs)">
+                  {{ row.averageResponseTimeMs | number: '1.0-0' }}
+                </td>
+                <td class="num">{{ row.maxResponseTimeMs | number }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+
+      <p class="hint">En çok 5xx dönen servis en üstte. Satır rengi hata oranını gösterir.</p>
+    }
+  }
+}

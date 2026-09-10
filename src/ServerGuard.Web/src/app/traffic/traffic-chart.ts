@@ -11,6 +11,10 @@ import { TrafficApiService } from '../core/services/traffic-api.service';
 
 const MILLISECONDS_PER_SECOND = 1000;
 
+/** HTTP durum sınıfı sınırları (backend'deki eşiklerle aynı). */
+const CLIENT_ERROR_LOWER_BOUND = 400;
+const SERVER_ERROR_LOWER_BOUND = 500;
+
 @Component({
   selector: 'sg-traffic-chart',
   imports: [DxChartModule],
@@ -85,7 +89,7 @@ export class TrafficChart {
 
       if (index >= 0) {
         const updated = [...current];
-        updated[index] = { ...updated[index], requestCount: updated[index].requestCount + 1 };
+        updated[index] = addToBucket(updated[index], log.statusCode);
         return updated;
       }
 
@@ -96,7 +100,7 @@ export class TrafficChart {
         return current;
       }
 
-      return this.appendBuckets(current, lastBucket, bucketStart);
+      return this.appendBuckets(current, lastBucket, bucketStart, log.statusCode);
     });
   }
 
@@ -104,15 +108,16 @@ export class TrafficChart {
   private appendBuckets(
     current: TrafficTimelinePoint[],
     lastBucket: number,
-    newBucket: number
+    newBucket: number,
+    statusCode: number
   ): TrafficTimelinePoint[] {
     const extended = [...current];
 
     for (let bucket = lastBucket + this.bucketMs; bucket < newBucket; bucket += this.bucketMs) {
-      extended.push({ timestamp: new Date(bucket), requestCount: 0 });
+      extended.push(emptyBucket(new Date(bucket)));
     }
 
-    extended.push({ timestamp: new Date(newBucket), requestCount: 1 });
+    extended.push(addToBucket(emptyBucket(new Date(newBucket)), statusCode));
 
     return extended.slice(-current.length);
   }
@@ -120,4 +125,32 @@ export class TrafficChart {
   private bucketStartOf(moment: Date): number {
     return Math.floor(moment.getTime() / this.bucketMs) * this.bucketMs;
   }
+}
+
+/** Sıfır sayaçlı boş bir dilim. */
+function emptyBucket(timestamp: Date): TrafficTimelinePoint {
+  return {
+    timestamp,
+    requestCount: 0,
+    successCount: 0,
+    clientErrorCount: 0,
+    serverErrorCount: 0
+  };
+}
+
+/**
+ * İsteği dilime ekler ve HTTP durum sınıfına göre ilgili sayacı artırır.
+ * Toplamı artırıp sınıfı atlamak, grafikte yığınların toplamla tutmamasına yol açardı.
+ */
+function addToBucket(point: TrafficTimelinePoint, statusCode: number): TrafficTimelinePoint {
+  const isServerError = statusCode >= SERVER_ERROR_LOWER_BOUND;
+  const isClientError = statusCode >= CLIENT_ERROR_LOWER_BOUND && !isServerError;
+
+  return {
+    ...point,
+    requestCount: point.requestCount + 1,
+    successCount: point.successCount + (isServerError || isClientError ? 0 : 1),
+    clientErrorCount: point.clientErrorCount + (isClientError ? 1 : 0),
+    serverErrorCount: point.serverErrorCount + (isServerError ? 1 : 0)
+  };
 }

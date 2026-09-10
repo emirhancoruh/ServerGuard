@@ -19,11 +19,27 @@
     } @else {
       <dx-chart [dataSource]="points()">
         <dxi-series
-          type="line"
+          type="stackedarea"
           argumentField="timestamp"
-          valueField="requestCount"
-          name="İstek"
-          color="#1c7ed6">
+          valueField="successCount"
+          name="2xx"
+          color="#37b24d">
+          <dxo-point [visible]="false"></dxo-point>
+        </dxi-series>
+        <dxi-series
+          type="stackedarea"
+          argumentField="timestamp"
+          valueField="clientErrorCount"
+          name="4xx"
+          color="#f08c00">
+          <dxo-point [visible]="false"></dxo-point>
+        </dxi-series>
+        <dxi-series
+          type="stackedarea"
+          argumentField="timestamp"
+          valueField="serverErrorCount"
+          name="5xx"
+          color="#e03131">
           <dxo-point [visible]="false"></dxo-point>
         </dxi-series>
         <dxo-argument-axis argumentType="datetime">
@@ -32,7 +48,7 @@
         <dxi-value-axis [allowDecimals]="false">
           <dxo-title text="İstek sayısı"></dxo-title>
         </dxi-value-axis>
-        <dxo-legend [visible]="false"></dxo-legend>
+        <dxo-legend [visible]="true" verticalAlignment="top" horizontalAlignment="right"></dxo-legend>
         <dxo-tooltip [enabled]="true"></dxo-tooltip>
         <dxo-common-series-settings [ignoreEmptyPoints]="false"></dxo-common-series-settings>
       </dx-chart>

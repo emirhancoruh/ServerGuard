@@ -13,6 +13,9 @@ export interface TrafficTimelinePoint {
   /** Dilimin başlangıcı. Grafik ekseni için Date'e çevrilir. */
   timestamp: Date;
   requestCount: number;
+  successCount: number;
+  clientErrorCount: number;
+  serverErrorCount: number;
 }
 
 /** ServerGuard.Shared/Dtos/TopClientIpDto.cs karşılığı. */
@@ -63,9 +66,17 @@ export function toTimelinePoint(raw: unknown): TrafficTimelinePoint | null {
     return null;
   }
 
+  const count = (key: string): number => {
+    const value = (raw as Record<string, unknown>)[key];
+    return typeof value === 'number' ? value : 0;
+  };
+
   return {
     timestamp: new Date(candidate.timestamp),
-    requestCount: typeof candidate.requestCount === 'number' ? candidate.requestCount : 0
+    requestCount: count('requestCount'),
+    successCount: count('successCount'),
+    clientErrorCount: count('clientErrorCount'),
+    serverErrorCount: count('serverErrorCount')
   };
 }
 

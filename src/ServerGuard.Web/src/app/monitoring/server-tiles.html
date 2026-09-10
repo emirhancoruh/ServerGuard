@@ -1,0 +1,75 @@
+@if (state() === 'error') {
+  <div class="status status--error">
+    <p>Sunucu durumu alınamadı.</p>
+    <button type="button" (click)="load()">Yeniden dene</button>
+  </div>
+} @else if (servers().length === 0) {
+  <p class="status">
+    @if (state() === 'loading') {
+      Sunucular yükleniyor…
+    } @else {
+      Veri gönderen sunucu yok. Agent çalıştığında burada görünecek.
+    }
+  </p>
+} @else {
+  <div class="tiles">
+    @for (server of servers(); track server.serverName) {
+      <article class="tile" [class]="'tile--' + server.status.toLowerCase()">
+        <header>
+          <span class="dot" aria-hidden="true"></span>
+          <h3>{{ server.serverName }}</h3>
+          <span class="status-text">{{ statusLabel(server.status) }}</span>
+        </header>
+
+        <p class="last-seen">{{ lastSeenLabel(server.secondsSinceLastSeen) }}</p>
+
+        <dl class="metrics">
+          <div class="metric">
+            <dt>CPU</dt>
+            <dd>
+              @if (server.cpuUsagePercent === null) {
+                <span class="no-data">—</span>
+              } @else {
+                <span class="value">%{{ server.cpuUsagePercent | number: '1.0-0' }}</span>
+                <span class="track">
+                  <span class="bar" [class]="usageClass(server.cpuUsagePercent)"
+                        [style.width.%]="server.cpuUsagePercent"></span>
+                </span>
+              }
+            </dd>
+          </div>
+
+          <div class="metric">
+            <dt>RAM</dt>
+            <dd>
+              @if (server.ramUsagePercent === null) {
+                <span class="no-data">—</span>
+              } @else {
+                <span class="value">%{{ server.ramUsagePercent | number: '1.0-0' }}</span>
+                <span class="track">
+                  <span class="bar" [class]="usageClass(server.ramUsagePercent)"
+                        [style.width.%]="server.ramUsagePercent"></span>
+                </span>
+              }
+            </dd>
+          </div>
+
+          <div class="metric">
+            <dt>Disk</dt>
+            <dd>
+              @if (server.diskFreePercent === null) {
+                <span class="no-data" title="Bu agent sürümü disk ölçümü göndermiyor">—</span>
+              } @else {
+                <span class="value">%{{ server.diskFreePercent | number: '1.0-0' }} boş</span>
+                <span class="track">
+                  <span class="bar" [class]="diskClass(server.diskFreePercent)"
+                        [style.width.%]="diskUsedPercent(server.diskFreePercent)"></span>
+                </span>
+              }
+            </dd>
+          </div>
+        </dl>
+      </article>
+    }
+  </div>
+}
