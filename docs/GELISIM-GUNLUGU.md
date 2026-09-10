@@ -889,3 +889,99 @@ Boş küme için `AverageAsync` sorun çıkarır; onun yerine tek gruba indirgey
 - Özet şu an **sabit alanlar** içeriyor. Sunucu bazında kırılım, saatlik dağılım veya en çok alarm üreten IP'ler gibi ayrıntılar yok.
 - CSV **tarayıcıda** üretiliyor; ekranda görünen özetin birebir kopyası. Ham kayıtları (tüm trafik satırları) dışa aktarmak isteniyorsa bu, sunucu tarafında akış (streaming) gerektirir — tarayıcıda üretilemez.
 - Tarih seçicileri **yerel gün** sınırlarını kullanıyor: başlangıç 00:00:00, bitiş 23:59:59.999 olarak UTC'ye çevriliyor. Sunucuların farklı zaman diliminde olduğu bir kurulumda bu ayrıntı gözden geçirilmeli.
+
+---
+
+## Prompt 15 — SIEM/izleme eksiklerinin tamamlanması (2026-09-10)
+
+### Neden
+
+Panel ilk kez gerçek bir sunucudan (`YLNSERVER`, 14 IIS mikroservisi) veri almaya başladıktan sonra
+elimizdeki veriye bakıldığında ciddi bir boşluk ortaya çıktı:
+
+| Saat | İstek | 500 hatası | Oran |
+|---|---|---|---|
+| 08:00 | 27 | 12 | %44 |
+| **11:00** | **92** | **76** | **%83** |
+
+93 hatanın tamamı tek bir endpoint'ten geliyordu (`/services/kanban/Synchronize/Webhook`,
+ortalama 4,3 sn, en yavaş 22 sn). **Panel bunların hiçbirini göstermiyordu**; ekranda sadece
+yeşil bir toplam trafik çizgisi vardı.
+
+Eksiklik veri toplamada değil sunumdaydı: `StatusCode` ve `ResponseTimeMs` zaten toplanıyor,
+ekranda hiç kullanılmıyordu.
+
+### Ne yapıldı
+
+**1. Sunucu ayakta mı (en kritik eksik).** Bir agent susarsa kartı eski veriyle ekranda durmaya
+devam ediyordu. `ServerHealthStatus` (Online / Stale / Offline) eklendi; karar son görülme
+zamanından **sunucu tarafında** verilir — istemcilerin saatleri kaymış olabilir ve aynı sunucu
+iki panelde farklı görünmemelidir. Eşikler `Monitoring:ServerHealth` altında yapılandırılır
+(varsayılan 60 sn gecikme, 3 dk erişilemez).
+
+**2. Hata oranı ve gecikme.** `TrafficTimelinePointDto` artık 2xx/4xx/5xx sayaçlarını ayrı taşıyor;
+grafik yığılmış alan grafiğine dönüştü. Toplam istek eğrisi tek başına yanıltıcıdır: hepsi hata
+dönen bir servis, sağlıklı bir servisle aynı görünür.
+
+**3. Servis bazında sağlık.** `GET /api/traffic/services` istek yolunun ilk iki segmentinden servis
+adı türetir (`/services/kanban/Sync/Webhook` → `/services/kanban`) ve istek sayısı, 4xx/5xx, hata
+oranı, ortalama/maksimum yanıt süresi döner. En çok 5xx dönen servis en üstte. 14 mikroservisli bir
+kurulumda "hangisi bozuldu" sorusunun cevabı budur.
+
+**4. Genel durum özeti.** `GET /api/overview` sunucu durumlarını, trafik sayaçlarını ve alarmları
+tek özete indirger. Panelin en üstünde tek cümlelik bir durum çubuğu olarak gösterilir; en kötü
+sinyal kazanır. Bu hesap istemciye bırakılsaydı her panel kendi yorumunu üretirdi.
+
+**5. Disk alanı.** Sunucu çökmelerinin en yaygın sebeplerinden biri. Agent artık en dolu sabit
+diskin boş alan yüzdesini gönderiyor — ortalama değil **en kötü** disk, çünkü sunucuyu durduran
+odur. Alan **nullable**: bu ölçümü göndermeyen eski agent'lar çalışmaya devam eder, panelde
+yalnızca "—" görünür.
+
+**6. Bilgi yoğunluğu.** Büyük DevExtreme gauge'lar, iki sayı için çok yer kaplıyordu ve çevrimdışı
+durumu ifade edemiyordu. Yerlerine kompakt sunucu kartları geldi: durum noktası, "4 dk önce",
+CPU/RAM/disk için satır içi çubuklar. Erişilemeyen sunucu soluk ve kırmızı kenarlıklı görünür.
+
+Renk hiçbir yerde tek başına anlam taşımaz; nokta, kenarlık ve metinle birlikte kullanılır.
+
+### Doğrulama
+
+| Test | Sonuç |
+|---|---|
+| `dotnet build` / `ng build` / 14 vitest | Hepsi geçti, 0 uyarı |
+| Migration (`AddDiskFreePercent`) | Nullable kolon eklendi, mevcut veri korundu |
+| `GET /api/servers` | Durum, son görülme saniyesi, CPU/RAM/disk döndü |
+| `GET /api/overview` | 72 istek, %0 hata, ort 511 ms, 2 yüksek öncelikli alarm |
+| `GET /api/traffic/services` | kanban 65 istek, token ort **5683 ms**, licence ort **3090 ms** |
+| **Çökmüş sunucu (10 dk sessiz)** | **Offline**, durum çubuğu kırmızıya döndü, kart soluklaştı |
+| **Gecikmiş sunucu (90 sn)** | **Stale**, turuncu |
+| Çevrimiçi sunucu (30 sn) | **Online**, yeşil |
+| Disk %3 ve %8 | Kırmızı; %62 normal renk |
+| Eski agent (disk göndermeyen) | Panelde "—", hata yok |
+
+Servis tablosu ilk açılışta işe yarar bir şey gösterdi: `/services/token` ortalama 5,7 saniye,
+`/services/licence` 3,1 saniye. Bunlar daha önce görünmüyordu.
+
+### Öğrenilen kavramlar
+- **Veri toplamak ile göstermek ayrı işlerdir.** Toplanan ama gösterilmeyen alan, yokmuş gibidir.
+  Hata oranı ve gecikme aylardır kaydediliyordu ve kimse göremiyordu.
+- **Verinin yokluğu da bir sinyaldir.** Canlı akış "sunucu çöktü" diyemez; çünkü çöken sunucu
+  hiçbir şey göndermez. Bunu ancak periyodik bir kontrol fark eder.
+- **Yorumu sunucuda yapmak.** Durum kararı istemcide verilseydi, saat farkları yüzünden aynı sistem
+  iki ekranda farklı görünebilirdi.
+- **Nullable alan ile sürüm uyumu.** Yeni bir metrik eklemek, sahadaki eski agent'ları bozmamalı.
+  `null` "bu agent göndermiyor" demektir ve panelde dürüstçe "—" olarak gösterilir.
+- **En kötü değeri raporlamak.** Disklerin ortalaması anlamsızdır; sunucuyu durduran, dolan diskdir.
+- **İzleme ekranında yoğunluk.** Süslü gösterge yerine piksel başına daha çok sinyal; ve her
+  durumun (çevrimdışı, veri yok, yükleniyor) görsel bir karşılığı olması.
+
+### Notlar / dikkat
+- **Sahadaki agent güncellenmeli.** `YLNSERVER`'daki agent disk ölçümü göndermiyor; yeni paket
+  kopyalanıp servis yeniden başlatılana kadar disk sütunu boş kalacak.
+- Servis adı, istek yolunun ilk **iki** segmentinden türetiliyor. Farklı bir yol düzeni kullanan
+  ortamlarda `MonitoringConstraints.ServiceNameSegmentCount` ayarlanmalı.
+- Gecikme ölçütü olarak ortalama ve maksimum kullanılıyor. p95/p99 daha iyi olurdu ama EF Core
+  `PERCENTILE_CONT` çeviremiyor; ham SQL gerekirdi.
+- **Alarm durumu (yeni/görüldü/çözüldü) hâlâ yok.** Gerçek bir SIEM'de alarmların yaşam döngüsü
+  vardır; bizimkiler tek seferlik. Sıradaki en değerli eksik bu.
+- Servis satırına tıklayıp detaya inme (drill-down) yok.
+- Uygulama havuzu (app pool) durumu ve Windows servis durumu toplanmıyor.

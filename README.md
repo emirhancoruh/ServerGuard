@@ -47,13 +47,15 @@ Controller  →  IValidator (FluentValidation)  →  IRepository  →  DbContext
 | Method | Yol | Açıklama | Yanıt |
 |---|---|---|---|
 | `GET` | `/health` | Uygulama + DB sağlık kontrolü | 200 Healthy |
-| `GET` | `/api/servers` | Veri gönderen sunucuları son görülme zamanlarıyla döner | 200 dizi / 400 doğrulama hatası |
+| `GET` | `/api/servers` | Sunucuları durumu (Online/Stale/Offline), son görülme ve CPU/RAM/disk ile döner | 200 dizi / 400 doğrulama hatası |
+| `GET` | `/api/overview` | Tek bakışta durum özeti: sunucular, hata oranı, gecikme, alarmlar | 200 özet / 400 doğrulama hatası |
 | `POST` | `/api/metrics` | `ServerMetricDto` kaydeder ve panele yayınlar | 201 `{ id }` / 400 doğrulama hatası |
 | `POST` | `/api/security-events` | `SecurityEventDto` kaydeder ve panele yayınlar | 201 `{ id }` / 400 doğrulama hatası |
 | `GET` | `/api/alerts` | Alarmları filtreleyip sayfalayarak döner | 200 `PagedResult` / 400 doğrulama hatası |
 | `POST` | `/api/traffic` | `TrafficLogDto` kaydeder ve panele yayınlar | 201 `{ id }` / 400 doğrulama hatası |
 | `GET` | `/api/traffic/timeline` | İstek sayısını zaman dilimlerine bölerek döner | 200 dizi / 400 doğrulama hatası |
 | `GET` | `/api/traffic/top-ips` | En çok istek gönderen adresler | 200 dizi / 400 doğrulama hatası |
+| `GET` | `/api/traffic/services` | Servis bazında istek, 4xx/5xx, hata oranı ve yanıt süresi | 200 dizi / 400 doğrulama hatası |
 | `GET` | `/api/reports/summary` | Tarih aralığının özeti (istek, ortalama CPU/RAM, alarm kırılımı) | 200 özet / 400 doğrulama hatası |
 | `WS` | `/hubs/monitoring` | SignalR hub. `ReceiveMetric`, `ReceiveSecurityEvent` ve `ReceiveAlert` event'lerini yayınlar | — |
 
@@ -117,6 +119,25 @@ Bellek iki şekilde korunur: `IdleRetention` süresidir görülmeyen sayaçlar p
 
 > Sayaçlar bellek içidir: Api yeniden başlarsa sıfırlanır ve birden fazla Api örneğinde her biri
 > kendi sayacını tutar. Yatay ölçeklemede paylaşılan bir sayaç (ör. Redis) gerekir.
+
+## Sunucu sağlık durumu
+
+Bir agent susarsa panel bunu fark eder. Durum, son veri geldiği andan hesaplanır ve **sunucu
+tarafında** belirlenir; istemcilerin saatleri kaymış olsa da aynı sistem her ekranda aynı görünür.
+
+| Durum | Anlamı |
+|---|---|
+| `Online` | Beklenen aralıkta veri geliyor |
+| `Stale` | Veri gecikti; ağ sorunu veya agent yavaşlaması olabilir |
+| `Offline` | Uzun süredir veri yok; sunucu veya agent muhtemelen çalışmıyor |
+
+| Anahtar (`Monitoring:ServerHealth`) | Açıklama | Varsayılan |
+|---|---|---|
+| `StaleAfter` | Bu süre veri gelmezse "gecikti" | `00:01:00` |
+| `OfflineAfter` | Bu süre veri gelmezse "erişilemiyor" | `00:03:00` |
+
+> Eşikler agent'ın toplama aralığına göre ayarlanmalıdır; tek bir kaçırılmış gönderim yanlış
+> alarm üretmesin diye varsayılanlar aralığın epeyce üzerindedir.
 
 ### IP itibar sorgusu (AbuseIPDB) — opsiyonel
 
@@ -429,10 +450,15 @@ Yeni bir sunucu eklemek için: [docs/AGENT-KURULUM.md](docs/AGENT-KURULUM.md)
 
 Angular paneli hub'a bağlanır ve şunları gösterir:
 
-- **Sunucu kartları** — her sunucu için CPU/RAM gauge'ları, canlı.
-- **Trafik grafiği** — son 60 dakikadaki istek sayısı, zaman bazlı çizgi grafik. Açılışta geçmiş
-  `GET /api/traffic/timeline` ile yüklenir, sonrasında hub'dan gelen her istek ilgili dilimin
-  sayacını artırır. Yükleme ve hata durumları için ayrı görünüm, hata halinde "yeniden dene" düğmesi.
+- **Durum çubuğu** — tek cümlelik genel durum ve KPI'lar (istek/dk, hata oranı, ortalama ve en
+  yavaş yanıt, alarm sayısı). En kötü sinyal kazanır; renk sistemin sağlığını okumadan gösterir.
+- **Sunucu kartları** — durum noktası (çevrimiçi / veri gecikti / erişilemiyor), son görülme zamanı,
+  CPU/RAM/disk çubukları. **Erişilemeyen sunucu soluk ve kırmızı kenarlıklı görünür**; agent
+  susarsa panel bunu fark eder.
+- **Servis sağlığı** — servis bazında istek, 4xx/5xx, hata oranı ve yanıt süresi. En çok 5xx dönen
+  servis en üstte; hangi mikroservisin bozulduğu buradan okunur.
+- **Trafik grafiği** — 2xx / 4xx / 5xx yığılmış alan grafiği. Toplam istek eğrisi tek başına
+  yanıltıcıdır: hepsi hata dönen bir servis, sağlıklı olanla aynı görünür.
 - **En çok istek atan IP'ler** — ilk 10 adres, oran çubuklarıyla.
 - **Güvenlik alarmları** — en yeni üstte, önem derecesine göre renk kodlu.
 
