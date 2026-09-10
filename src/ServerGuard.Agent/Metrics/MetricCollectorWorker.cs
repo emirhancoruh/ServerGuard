@@ -61,7 +61,8 @@ public sealed class MetricCollectorWorker(
                 _agentOptions.ServerName,
                 snapshot.CpuUsagePercent,
                 snapshot.RamUsagePercent,
-                timeProvider.GetUtcNow()));
+                timeProvider.GetUtcNow(),
+                snapshot.DiskFreePercent));
 
             await dispatcher.FlushAsync(cancellationToken);
         }
