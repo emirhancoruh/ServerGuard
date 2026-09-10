@@ -6,18 +6,23 @@ using ServerGuard.Shared.Dtos;
 namespace ServerGuard.Agent.Traffic;
 
 /// <summary>
-/// IIS'in W3C log dosyasını takip eder, yalnızca yeni eklenen satırları okur ve backend'e gönderir.
+/// IIS'in W3C log dosyalarını takip eder, yalnızca yeni eklenen satırları okur ve backend'e gönderir.
+/// Birden fazla site klasörü aynı anda izlenebilir.
 /// </summary>
 /// <remarks>
-/// Okuma konumu ancak satırlar backend'e <b>ulaştıktan sonra</b> kalıcı hale getirilir.
-/// Backend erişilemezken konum ilerlemez ve yeni satır okunmaz; log dosyasının kendisi
-/// tampon görevi görür. Böylece veri kaybı olmaz. Süreç tam teslimat ile konumun yazılması
-/// arasında düşerse birkaç satır tekrar okunabilir (en az bir kez teslim).
+/// <para>
+/// Her klasörün okuma konumu ayrı tutulur ve tek bir konum dosyasında birlikte saklanır.
+/// Kuyruk tüm klasörler arasında paylaşıldığından bir turda klasörler <b>sırayla</b> işlenir:
+/// bir klasörün kayıtları teslim edilmeden diğerine geçilmez. Bu kural olmadan, teslim
+/// edilemeyen kayıtlar başka bir klasörün konumunun ilerlemesine yol açabilir ve o klasörün
+/// satırları kaybolabilirdi.
+/// </para>
 /// </remarks>
 public sealed class TrafficLogWorker(
     TrafficLogFileReader reader,
     W3CLogParser parser,
     LogOffsetStore offsetStore,
+    LogDirectoryResolver directoryResolver,
     BackendDispatcher<TrafficLogDto> dispatcher,
     IOptions<AgentOptions> agentOptions,
     IOptions<TrafficOptions> trafficOptions,
@@ -31,12 +36,15 @@ public sealed class TrafficLogWorker(
     /// <summary>Dosya değişikliğinde döngüyü erken uyandırır.</summary>
     private readonly SemaphoreSlim _changeSignal = new(0, 1);
 
-    private FileSystemWatcher? _watcher;
-    private W3CFieldMap? _fieldMap;
-    private string? _currentFileName;
-    private long _committedOffset;
-    private long _pendingOffset;
-    private bool _missingFieldMapReported;
+    private readonly List<TrafficDirectoryTracker> _trackers = [];
+    private readonly List<FileSystemWatcher> _watchers = [];
+
+    private LogOffsetFile _offsets = new();
+
+    /// <summary>Teslim edilemeyen kayıtları olan klasör; bir sonraki turda önce o denenir.</summary>
+    private TrafficDirectoryTracker? _blockedTracker;
+
+    private DateTimeOffset _lastDirectoryScanAt = DateTimeOffset.MinValue;
 
     private string OffsetFilePath => Path.IsPathRooted(_options.OffsetFilePath)
         ? _options.OffsetFilePath
@@ -50,24 +58,25 @@ public sealed class TrafficLogWorker(
             return;
         }
 
-        if (!Directory.Exists(_options.LogDirectory))
+        var directories = directoryResolver.Resolve();
+
+        if (directories.Count == 0)
         {
             // IIS kurulu değilse veya yol yanlışsa yalnızca bu toplayıcı durur; agent çalışmayı sürdürür.
             logger.LogWarning(
-                "IIS log directory not found: {Directory}. Set Agent:Traffic:LogDirectory or " +
-                "disable it with Agent:Traffic:Enabled=false.",
-                _options.LogDirectory);
+                "No IIS log directory found. Set Agent:Traffic:LogRoot (or LogDirectories) or " +
+                "disable collection with Agent:Traffic:Enabled=false.");
 
             return;
         }
 
-        await RestoreOffsetAsync(stoppingToken);
-        StartWatcher();
+        _offsets = await offsetStore.LoadAsync(OffsetFilePath, directories[0], stoppingToken);
+        await SynchronizeTrackersAsync(directories, stoppingToken);
 
         logger.LogInformation(
-            "Traffic log watcher started. Server={ServerName} Directory={Directory} Pattern={Pattern}",
+            "Traffic log watcher started. Server={ServerName} Directories={DirectoryCount} Pattern={Pattern}",
             _agentOptions.ServerName,
-            _options.LogDirectory,
+            _trackers.Count,
             _options.FilePattern);
 
         try
@@ -77,7 +86,9 @@ public sealed class TrafficLogWorker(
                 // Dosya değişince erken uyanır, değişmezse yoklama aralığında yine de kontrol eder:
                 // FileSystemWatcher olayları kaçırabilir, tek başına güvenilmez.
                 await _changeSignal.WaitAsync(_options.PollInterval, stoppingToken);
-                await ProcessAsync(stoppingToken);
+
+                await RescanDirectoriesIfDueAsync(stoppingToken);
+                await ProcessTrackersAsync(stoppingToken);
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -86,7 +97,7 @@ public sealed class TrafficLogWorker(
         }
         finally
         {
-            StopWatcher();
+            StopWatchers();
         }
 
         logger.LogInformation("Traffic log watcher stopped. PendingInQueue={Count}", dispatcher.PendingCount);
@@ -94,306 +105,162 @@ public sealed class TrafficLogWorker(
 
     public override void Dispose()
     {
-        StopWatcher();
+        StopWatchers();
         _changeSignal.Dispose();
         base.Dispose();
     }
 
-    private async Task ProcessAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// Klasörleri sırayla işler. Bir klasör teslimat yapamadıysa tur orada biter; kalan
+    /// klasörler bir sonraki turda ele alınır. Backend erişilemezken devam etmek yalnızca
+    /// kuyruğu şişirirdi.
+    /// </summary>
+    private async Task ProcessTrackersAsync(CancellationToken cancellationToken)
     {
-        try
+        foreach (var tracker in TrackersInResumeOrder())
         {
-            // Önceki turdan teslim edilmemiş kayıt varsa önce onlar gönderilir;
-            // teslim edilmeden yeni satır okunmaz, böylece kuyrukta mükerrer kayıt oluşmaz.
-            if (dispatcher.PendingCount > 0)
+            var result = await tracker.ProcessAsync(PersistOffsetsAsync, cancellationToken);
+
+            if (result == TrafficCycleResult.BackendUnavailable)
             {
-                await FlushAndCommitAsync(cancellationToken);
+                _blockedTracker = tracker;
                 return;
             }
-
-            var newestFileName = FindNewestFileName();
-
-            if (newestFileName is null)
-            {
-                return;
-            }
-
-            if (_currentFileName is null)
-            {
-                await TrackFileAsync(newestFileName, _options.ReadExistingFileOnFirstRun, cancellationToken);
-            }
-
-            var linesRead = await ReadAndDispatchAsync(cancellationToken);
-
-            // İzlenen dosyada okunacak satır kalmadıysa ve daha yeni bir dosya oluştuysa geçiş yapılır.
-            // Önce eski dosyanın sonu okunur; böylece devir sırasında son satırlar kaybolmaz.
-            if (linesRead == 0 && _currentFileName != newestFileName && dispatcher.PendingCount == 0)
-            {
-                logger.LogInformation(
-                    "Log file rotated. Previous={Previous} Current={Current}",
-                    _currentFileName,
-                    newestFileName);
-
-                await TrackFileAsync(newestFileName, fromBeginning: true, cancellationToken);
-            }
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            // Tek bir turun hatası worker'ı düşürmemeli; bir sonraki turda devam edilir.
-            logger.LogError(exception, "Traffic log cycle failed; will retry on next tick.");
-        }
-    }
-
-    private async Task<int> ReadAndDispatchAsync(CancellationToken cancellationToken)
-    {
-        var path = CurrentFilePath();
-        var totalLines = 0;
-
-        while (totalLines < _options.MaxLinesPerCycle && !cancellationToken.IsCancellationRequested)
-        {
-            var chunk = await reader.ReadLinesAsync(path, _committedOffset, cancellationToken);
-
-            if (!chunk.HasLines)
-            {
-                // Dosya kesilmişse okuyucu konumu sıfırlar; bunu kalıcı hale getir.
-                if (chunk.NextOffset != _committedOffset)
-                {
-                    _committedOffset = chunk.NextOffset;
-                    _pendingOffset = chunk.NextOffset;
-                    await SaveOffsetAsync(cancellationToken);
-                }
-
-                break;
-            }
-
-            var enqueued = EnqueueLines(chunk.Lines);
-            _pendingOffset = chunk.NextOffset;
-            totalLines += chunk.Lines.Count;
-
-            if (enqueued == 0)
-            {
-                // Yalnızca başlık/yorum satırları vardı; gönderilecek bir şey yok, konum ilerler.
-                _committedOffset = _pendingOffset;
-                await SaveOffsetAsync(cancellationToken);
-                continue;
-            }
-
-            await FlushAndCommitAsync(cancellationToken);
-
-            if (dispatcher.PendingCount > 0)
-            {
-                // Backend erişilemiyor; okumayı durdur, konum ilerlemesin.
-                break;
-            }
         }
 
-        return totalLines;
+        _blockedTracker = null;
     }
 
     /// <summary>
-    /// Kuyruğu boşaltır ve <b>yalnızca tamamı teslim edildiyse</b> okuma konumunu ilerletir.
+    /// Teslim edilemeyen kayıtları olan klasör listenin başına alınır; kuyruktaki kayıtların
+    /// sahibi odur ve konumu ancak o klasör tarafından ilerletilebilir.
     /// </summary>
-    private async Task FlushAndCommitAsync(CancellationToken cancellationToken)
+    private IEnumerable<TrafficDirectoryTracker> TrackersInResumeOrder()
     {
-        await dispatcher.FlushAsync(cancellationToken);
-
-        if (dispatcher.PendingCount > 0)
+        if (_blockedTracker is not null)
         {
-            logger.LogWarning(
-                "Traffic offset not advanced; {Count} record(s) still undelivered.",
-                dispatcher.PendingCount);
-
-            return;
+            yield return _blockedTracker;
         }
 
-        _committedOffset = _pendingOffset;
-        await SaveOffsetAsync(cancellationToken);
+        foreach (var tracker in _trackers)
+        {
+            if (!ReferenceEquals(tracker, _blockedTracker))
+            {
+                yield return tracker;
+            }
+        }
     }
 
-    private int EnqueueLines(IReadOnlyList<string> lines)
+    /// <summary>Tüm klasörlerin konumlarını tek dosyaya yazar.</summary>
+    private Task PersistOffsetsAsync(CancellationToken cancellationToken)
     {
-        var enqueued = 0;
+        foreach (var tracker in _trackers)
+        {
+            if (tracker.CurrentOffset is { } offset)
+            {
+                _offsets.Sources[tracker.Directory] = offset;
+            }
+        }
+
+        return offsetStore.SaveAsync(OffsetFilePath, _offsets, cancellationToken);
+    }
+
+    private async Task RescanDirectoriesIfDueAsync(CancellationToken cancellationToken)
+    {
         var now = timeProvider.GetUtcNow();
 
-        foreach (var line in lines)
+        if (now - _lastDirectoryScanAt < _options.DirectoryRescanInterval)
         {
-            if (line.Length == 0)
-            {
-                continue;
-            }
-
-            if (line[0] == W3CFieldMap.CommentPrefix)
-            {
-                ApplyDirective(line);
-                continue;
-            }
-
-            if (_fieldMap is null)
-            {
-                ReportMissingFieldMapOnce();
-                continue;
-            }
-
-            if (parser.TryParse(line, _fieldMap, _agentOptions.ServerName, now, out var trafficLog))
-            {
-                dispatcher.Enqueue(trafficLog);
-                enqueued++;
-            }
+            return;
         }
 
-        return enqueued;
+        var directories = directoryResolver.Resolve();
+
+        if (directories.Count > 0)
+        {
+            await SynchronizeTrackersAsync(directories, cancellationToken);
+        }
     }
 
     /// <summary>
-    /// IIS log yapılandırması değişirse dosyanın ortasında yeni bir "#Fields:" satırı yazar;
-    /// alan sırası buradan güncellenir.
+    /// İzlenen klasör listesini günceller: yeni klasörler için izleyici ve takipçi oluşturur.
+    /// Kaybolan klasörler bırakılır ama konumları silinmez; geçici bir erişim sorunundan sonra
+    /// klasör geri geldiğinde kaldığı yerden devam edilir.
     /// </summary>
-    private void ApplyDirective(string line)
+    private async Task SynchronizeTrackersAsync(
+        IReadOnlyList<string> directories,
+        CancellationToken cancellationToken)
     {
-        var updated = W3CFieldMap.TryCreate(line);
+        _lastDirectoryScanAt = timeProvider.GetUtcNow();
 
-        if (updated is null)
+        foreach (var directory in directories)
         {
-            return;
-        }
+            if (_trackers.Any(tracker =>
+                    string.Equals(tracker.Directory, directory, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
 
-        _fieldMap = updated;
-        _missingFieldMapReported = false;
-        logger.LogInformation("W3C field map updated from log header. FieldCount={FieldCount}", updated.FieldCount);
+            var tracker = new TrafficDirectoryTracker(
+                directory,
+                reader,
+                parser,
+                dispatcher,
+                _options,
+                _agentOptions.ServerName,
+                timeProvider,
+                logger);
+
+            await tracker.InitializeAsync(_offsets.Sources.GetValueOrDefault(directory), cancellationToken);
+
+            _trackers.Add(tracker);
+            StartWatcher(directory);
+
+            logger.LogInformation("Watching IIS log directory. Directory={Directory}", directory);
+        }
     }
 
-    private void ReportMissingFieldMapOnce()
-    {
-        if (_missingFieldMapReported)
-        {
-            return;
-        }
-
-        _missingFieldMapReported = true;
-        logger.LogWarning(
-            "Traffic lines skipped: no '#Fields:' directive found yet. File={File}",
-            _currentFileName);
-    }
-
-    private async Task TrackFileAsync(string fileName, bool fromBeginning, CancellationToken cancellationToken)
-    {
-        _currentFileName = fileName;
-        _missingFieldMapReported = false;
-
-        var path = CurrentFilePath();
-        _fieldMap = await reader.ReadFieldMapAsync(path, cancellationToken);
-
-        _committedOffset = fromBeginning ? 0 : SafeFileLength(path);
-        _pendingOffset = _committedOffset;
-
-        await SaveOffsetAsync(cancellationToken);
-
-        logger.LogInformation(
-            "Tracking log file. File={File} StartOffset={Offset} FieldsKnown={FieldsKnown}",
-            fileName,
-            _committedOffset,
-            _fieldMap is not null);
-    }
-
-    private async Task RestoreOffsetAsync(CancellationToken cancellationToken)
-    {
-        var stored = await offsetStore.LoadAsync(OffsetFilePath, cancellationToken);
-
-        if (stored is null)
-        {
-            return;
-        }
-
-        var path = Path.Combine(_options.LogDirectory, stored.FileName);
-
-        if (!File.Exists(path))
-        {
-            logger.LogInformation(
-                "Stored log file no longer exists; starting from the newest file. File={File}",
-                stored.FileName);
-
-            return;
-        }
-
-        _currentFileName = stored.FileName;
-        _committedOffset = stored.Offset;
-        _pendingOffset = stored.Offset;
-        _fieldMap = await reader.ReadFieldMapAsync(path, cancellationToken);
-
-        logger.LogInformation(
-            "Resuming traffic log from stored offset. File={File} Offset={Offset}",
-            stored.FileName,
-            stored.Offset);
-    }
-
-    private Task SaveOffsetAsync(CancellationToken cancellationToken) =>
-        _currentFileName is null
-            ? Task.CompletedTask
-            : offsetStore.SaveAsync(OffsetFilePath, new LogOffset(_currentFileName, _committedOffset), cancellationToken);
-
-    private string CurrentFilePath() => Path.Combine(_options.LogDirectory, _currentFileName!);
-
-    /// <summary>
-    /// Klasördeki en yeni log dosyasını bulur. IIS dosyaları tarih içeren adlarla oluşturduğundan
-    /// ada göre sıralamak, sistem saati değişse bile doğru sonucu verir.
-    /// </summary>
-    private string? FindNewestFileName()
+    private void StartWatcher(string directory)
     {
         try
         {
-            return Directory
-                .EnumerateFiles(_options.LogDirectory, _options.FilePattern)
-                .Select(Path.GetFileName)
-                .Where(name => name is not null)
-                .OrderByDescending(name => name, StringComparer.OrdinalIgnoreCase)
-                .FirstOrDefault();
+            var watcher = new FileSystemWatcher(directory, _options.FilePattern)
+            {
+                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName,
+                EnableRaisingEvents = true
+            };
+
+            watcher.Changed += OnLogDirectoryChanged;
+            watcher.Created += OnLogDirectoryChanged;
+            watcher.Renamed += OnLogDirectoryChanged;
+            watcher.Error += OnWatcherError;
+
+            _watchers.Add(watcher);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
+            // İzleyici kurulamazsa yoklama aralığı yine de veriyi toplar; toplayıcı durmaz.
             logger.LogWarning(
-                "Log directory could not be listed ({Reason}: {Message}); will retry. Directory={Directory}",
+                "File watcher could not be started ({Reason}: {Message}); polling continues. Directory={Directory}",
                 exception.GetType().Name,
                 exception.Message,
-                _options.LogDirectory);
-
-            return null;
+                directory);
         }
     }
 
-    private static long SafeFileLength(string path)
+    private void StopWatchers()
     {
-        var info = new FileInfo(path);
-        return info.Exists ? info.Length : 0;
-    }
-
-    private void StartWatcher()
-    {
-        _watcher = new FileSystemWatcher(_options.LogDirectory, _options.FilePattern)
+        foreach (var watcher in _watchers)
         {
-            NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName,
-            EnableRaisingEvents = true
-        };
-
-        _watcher.Changed += OnLogDirectoryChanged;
-        _watcher.Created += OnLogDirectoryChanged;
-        _watcher.Renamed += OnLogDirectoryChanged;
-        _watcher.Error += OnWatcherError;
-    }
-
-    private void StopWatcher()
-    {
-        if (_watcher is null)
-        {
-            return;
+            watcher.Changed -= OnLogDirectoryChanged;
+            watcher.Created -= OnLogDirectoryChanged;
+            watcher.Renamed -= OnLogDirectoryChanged;
+            watcher.Error -= OnWatcherError;
+            watcher.EnableRaisingEvents = false;
+            watcher.Dispose();
         }
 
-        _watcher.Changed -= OnLogDirectoryChanged;
-        _watcher.Created -= OnLogDirectoryChanged;
-        _watcher.Renamed -= OnLogDirectoryChanged;
-        _watcher.Error -= OnWatcherError;
-        _watcher.EnableRaisingEvents = false;
-        _watcher.Dispose();
-        _watcher = null;
+        _watchers.Clear();
     }
 
     /// <summary>

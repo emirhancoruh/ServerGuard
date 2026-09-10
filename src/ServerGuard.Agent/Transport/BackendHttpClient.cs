@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Options;
 using Polly;
 using ServerGuard.Agent.Configuration;
+using ServerGuard.Shared;
 
 namespace ServerGuard.Agent.Transport;
 
@@ -28,6 +29,12 @@ public static class BackendHttpClient
             {
                 var options = serviceProvider.GetRequiredService<IOptions<AgentOptions>>().Value;
                 client.BaseAddress = options.ApiBaseUrl;
+
+                // Anahtar her istekte gider; tek tek çağrıların bunu hatırlaması gerekmez.
+                if (!string.IsNullOrWhiteSpace(options.ApiKey))
+                {
+                    client.DefaultRequestHeaders.Add(AuthConstraints.ApiKeyHeaderName, options.ApiKey);
+                }
             })
             .AddStandardResilienceHandler(resilience =>
             {

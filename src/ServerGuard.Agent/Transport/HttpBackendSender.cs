@@ -12,8 +12,17 @@ namespace ServerGuard.Agent.Transport;
 /// </summary>
 public sealed class HttpBackendSender(
     IHttpClientFactory httpClientFactory,
+    TimeProvider timeProvider,
     ILogger<HttpBackendSender> logger) : IBackendSender
 {
+    /// <summary>
+    /// Yetki hatası her gönderimde tekrarlanacağından, log'u boğmamak için bu aralıkta
+    /// en fazla bir kez yazılır.
+    /// </summary>
+    private static readonly TimeSpan AuthFailureLogInterval = TimeSpan.FromMinutes(1);
+
+    private DateTimeOffset _lastAuthFailureLoggedAt = DateTimeOffset.MinValue;
+
     public async Task<SendResult> SendAsync<T>(string route, T payload, CancellationToken cancellationToken)
     {
         var client = httpClientFactory.CreateClient(BackendHttpClient.Name);
@@ -25,6 +34,24 @@ public sealed class HttpBackendSender(
             if (response.IsSuccessStatusCode)
             {
                 return SendResult.Sent;
+            }
+
+            // Yetki hatası verinin bozuk olduğu anlamına gelmez, yapılandırmanın yanlış olduğu
+            // anlamına gelir. Kaydı atmak veriyi kalıcı olarak kaybettirir; bu yüzden kuyrukta
+            // tutulur ve anahtar düzeltildiğinde birikmiş kayıtlar gönderilir.
+            if (IsAuthenticationFailure(response.StatusCode))
+            {
+                ReportAuthenticationFailure(route, response.StatusCode);
+                return SendResult.Unavailable;
+            }
+
+            // Hız sınırına takılmak da geçicidir; sunucu "sonra tekrar dene" diyor.
+            if (response.StatusCode == HttpStatusCode.TooManyRequests)
+            {
+                logger.LogWarning(
+                    "Backend rate limit reached for {Route}; payload will be retried later.",
+                    route);
+                return SendResult.Unavailable;
             }
 
             if (IsClientError(response.StatusCode))
@@ -54,6 +81,28 @@ public sealed class HttpBackendSender(
             return SendResult.Unavailable;
         }
     }
+
+    private void ReportAuthenticationFailure(string route, HttpStatusCode statusCode)
+    {
+        var now = timeProvider.GetUtcNow();
+
+        if (now - _lastAuthFailureLoggedAt < AuthFailureLogInterval)
+        {
+            return;
+        }
+
+        _lastAuthFailureLoggedAt = now;
+
+        logger.LogError(
+            "Backend rejected the agent API key. Route={Route} StatusCode={StatusCode}. " +
+            "Set Agent:ApiKey in appsettings.json to a key listed under Security:Ingest:ApiKeys on the API. " +
+            "Records are kept in the local queue until this is fixed.",
+            route,
+            (int)statusCode);
+    }
+
+    private static bool IsAuthenticationFailure(HttpStatusCode statusCode) =>
+        statusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden;
 
     private static bool IsClientError(HttpStatusCode statusCode) =>
         statusCode is >= HttpStatusCode.BadRequest and < HttpStatusCode.InternalServerError;
