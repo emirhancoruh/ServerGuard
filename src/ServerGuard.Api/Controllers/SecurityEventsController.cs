@@ -1,16 +1,22 @@
 using FluentValidation;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using ServerGuard.Api.Contracts;
 using ServerGuard.Api.Detection;
 using ServerGuard.Api.Mapping;
 using ServerGuard.Api.Realtime;
 using ServerGuard.Api.Repositories;
+using ServerGuard.Api.Security;
+using ServerGuard.Api.Throttling;
 using ServerGuard.Shared;
 using ServerGuard.Shared.Dtos;
 
 namespace ServerGuard.Api.Controllers;
 
 [ApiController]
+[Authorize(Policy = AuthorizationPolicies.Ingest)]
+[EnableRateLimiting(RateLimitPolicies.Ingest)]
 [Route(ApiRoutes.SecurityEvents)]
 public sealed class SecurityEventsController(
     IValidator<SecurityEventDto> validator,

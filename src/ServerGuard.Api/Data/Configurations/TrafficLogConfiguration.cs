@@ -28,5 +28,9 @@ public sealed class TrafficLogConfiguration : IEntityTypeConfiguration<TrafficLo
 
         // "Şu IP'nin son X dakikadaki istekleri" — anormal patern analizinin ihtiyaç duyduğu sıra.
         builder.HasIndex(log => new { log.ClientIp, log.Timestamp });
+
+        // Saklama suresi dolan kayitlari silen temizlik islemi bu sirayi kullanir;
+        // indeks olmadan her tur tablonun tamamini tarardi.
+        builder.HasIndex(log => log.CreatedAt);
     }
 }

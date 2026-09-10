@@ -16,5 +16,9 @@ public sealed class ServerMetricConfiguration : IEntityTypeConfiguration<ServerM
             .IsRequired();
 
         builder.HasIndex(metric => new { metric.ServerName, metric.Timestamp });
+
+        // Saklama suresi dolan kayitlari silen temizlik islemi bu sirayi kullanir;
+        // indeks olmadan her tur tablonun tamamini tarardi.
+        builder.HasIndex(metric => metric.CreatedAt);
     }
 }

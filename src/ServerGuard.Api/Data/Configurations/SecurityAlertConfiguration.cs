@@ -35,5 +35,9 @@ public sealed class SecurityAlertConfiguration : IEntityTypeConfiguration<Securi
 
         // Panel "en son alarmlar" ve "şu sunucunun alarmları" biçiminde sorgular.
         builder.HasIndex(alert => new { alert.ServerName, alert.Timestamp });
+
+        // Saklama suresi dolan kayitlari silen temizlik islemi bu sirayi kullanir;
+        // indeks olmadan her tur tablonun tamamini tarardi.
+        builder.HasIndex(alert => alert.CreatedAt);
     }
 }

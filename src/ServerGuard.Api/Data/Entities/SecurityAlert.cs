@@ -5,7 +5,7 @@ namespace ServerGuard.Api.Data.Entities;
 /// <summary>
 /// SecurityAlertDto'nun veritabanı karşılığı. Id ve CreatedAt yalnızca kalıcı katmana aittir.
 /// </summary>
-public sealed class SecurityAlert
+public sealed class SecurityAlert : IRetainedRecord
 {
     public long Id { get; init; }
     public required string ServerName { get; init; }

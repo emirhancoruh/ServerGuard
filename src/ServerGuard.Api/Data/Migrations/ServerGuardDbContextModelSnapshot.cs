@@ -69,6 +69,8 @@ namespace ServerGuard.Api.Data.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("CreatedAt");
+
                     b.HasIndex("ServerName", "Timestamp");
 
                     b.ToTable("SecurityAlerts");
@@ -110,6 +112,8 @@ namespace ServerGuard.Api.Data.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("CreatedAt");
+
                     b.HasIndex("ServerName", "EventType", "SourceIp", "Timestamp");
 
                     b.ToTable("SecurityEvents");
@@ -144,6 +148,8 @@ namespace ServerGuard.Api.Data.Migrations
                         .HasColumnType("datetimeoffset");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("CreatedAt");
 
                     b.HasIndex("ServerName", "Timestamp");
 
@@ -186,6 +192,8 @@ namespace ServerGuard.Api.Data.Migrations
                         .HasColumnType("datetimeoffset");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("CreatedAt");
 
                     b.HasIndex("ClientIp", "Timestamp");
 

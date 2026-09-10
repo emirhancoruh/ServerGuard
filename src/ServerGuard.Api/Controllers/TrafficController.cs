@@ -1,15 +1,21 @@
 using FluentValidation;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using ServerGuard.Api.Contracts;
 using ServerGuard.Api.Detection;
 using ServerGuard.Api.Mapping;
 using ServerGuard.Api.Realtime;
 using ServerGuard.Api.Repositories;
+using ServerGuard.Api.Security;
+using ServerGuard.Api.Throttling;
 using ServerGuard.Shared;
 using ServerGuard.Shared.Dtos;
 
 namespace ServerGuard.Api.Controllers;
 
+// Bu controller hem agent'in yazdigi hem panelin okudugu uclari barindirdigindan
+// yetki ve hiz siniri sinif duzeyinde degil, her eylemde ayri tanimlanir.
 [ApiController]
 [Route(ApiRoutes.TrafficLogs)]
 public sealed class TrafficController(
@@ -23,6 +29,8 @@ public sealed class TrafficController(
     TimeProvider timeProvider) : ControllerBase
 {
     [HttpPost]
+    [Authorize(Policy = AuthorizationPolicies.Ingest)]
+    [EnableRateLimiting(RateLimitPolicies.Ingest)]
     [ProducesResponseType<CreatedResourceResponse>(StatusCodes.Status201Created)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Create(TrafficLogDto dto, CancellationToken cancellationToken)
@@ -42,6 +50,8 @@ public sealed class TrafficController(
     }
 
     [HttpGet(ApiRoutes.TimelineSegment)]
+    [Authorize(Policy = AuthorizationPolicies.Panel)]
+    [EnableRateLimiting(RateLimitPolicies.Panel)]
     [ProducesResponseType<IReadOnlyList<TrafficTimelinePointDto>>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> GetTimeline([FromQuery] TrafficTimelineQuery query, CancellationToken cancellationToken)
@@ -65,6 +75,8 @@ public sealed class TrafficController(
     }
 
     [HttpGet(ApiRoutes.TopClientIpsSegment)]
+    [Authorize(Policy = AuthorizationPolicies.Panel)]
+    [EnableRateLimiting(RateLimitPolicies.Panel)]
     [ProducesResponseType<IReadOnlyList<TopClientIpDto>>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> GetTopClientIps([FromQuery] TopClientIpQuery query, CancellationToken cancellationToken)
@@ -88,6 +100,8 @@ public sealed class TrafficController(
     }
 
     [HttpGet(ApiRoutes.ServiceHealthSegment)]
+    [Authorize(Policy = AuthorizationPolicies.Panel)]
+    [EnableRateLimiting(RateLimitPolicies.Panel)]
     [ProducesResponseType<IReadOnlyList<ServiceHealthDto>>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> GetServiceHealth([FromQuery] TrafficRangeQuery query, CancellationToken cancellationToken)

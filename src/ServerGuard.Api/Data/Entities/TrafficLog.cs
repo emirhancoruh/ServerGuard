@@ -3,7 +3,7 @@ namespace ServerGuard.Api.Data.Entities;
 /// <summary>
 /// TrafficLogDto'nun veritabanı karşılığı. Id ve CreatedAt yalnızca kalıcı katmana aittir.
 /// </summary>
-public sealed class TrafficLog
+public sealed class TrafficLog : IRetainedRecord
 {
     public long Id { get; init; }
     public required string ServerName { get; init; }

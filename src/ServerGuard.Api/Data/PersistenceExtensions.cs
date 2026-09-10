@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using ServerGuard.Api.Hosting;
 using ServerGuard.Api.Repositories;
 
 namespace ServerGuard.Api.Data;
@@ -31,7 +32,11 @@ public static class PersistenceExtensions
         services.AddScoped<IServerRepository, ServerRepository>();
         services.AddScoped<IReportRepository, ReportRepository>();
 
-        services.AddHealthChecks().AddDbContextCheck<ServerGuardDbContext>();
+        // Yalnizca hazir olma ucu veritabanina dokunur; canlilik ucu her cagrida
+        // baglanti denemesi yapmaz.
+        services
+            .AddHealthChecks()
+            .AddDbContextCheck<ServerGuardDbContext>(tags: [HealthEndpointExtensions.ReadinessTag]);
 
         return services;
     }

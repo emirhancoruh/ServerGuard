@@ -6,6 +6,8 @@ namespace ServerGuard.Shared;
 public static class ApiRoutes
 {
     public const string Health = "/health";
+    public const string HealthReady = "/health/ready";
+    public const string Auth = "/api/auth";
     public const string Servers = "/api/servers";
     public const string Metrics = "/api/metrics";
     public const string SecurityEvents = "/api/security-events";
@@ -24,8 +26,14 @@ public static class ApiRoutes
 
     public const string ServiceHealthSegment = "services";
 
+    public const string LoginSegment = "login";
+
+    public const string CurrentUserSegment = "me";
+
     public const string TrafficTimeline = $"{TrafficLogs}/{TimelineSegment}";
     public const string TopClientIps = $"{TrafficLogs}/{TopClientIpsSegment}";
     public const string ReportSummary = $"{Reports}/{SummarySegment}";
     public const string ServiceHealth = $"{TrafficLogs}/{ServiceHealthSegment}";
+    public const string Login = $"{Auth}/{LoginSegment}";
+    public const string CurrentUser = $"{Auth}/{CurrentUserSegment}";
 }

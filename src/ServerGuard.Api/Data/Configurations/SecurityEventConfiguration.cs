@@ -40,5 +40,9 @@ public sealed class SecurityEventConfiguration : IEntityTypeConfiguration<Securi
             securityEvent.SourceIp,
             securityEvent.Timestamp
         });
+
+        // Saklama suresi dolan kayitlari silen temizlik islemi bu sirayi kullanir;
+        // indeks olmadan her tur tablonun tamamini tarardi.
+        builder.HasIndex(securityEvent => securityEvent.CreatedAt);
     }
 }

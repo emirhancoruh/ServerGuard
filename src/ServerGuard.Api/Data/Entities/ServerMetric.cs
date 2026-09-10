@@ -3,7 +3,7 @@ namespace ServerGuard.Api.Data.Entities;
 /// <summary>
 /// ServerMetricDto'nun veritabanı karşılığı. Id ve CreatedAt yalnızca kalıcı katmana aittir.
 /// </summary>
-public sealed class ServerMetric
+public sealed class ServerMetric : IRetainedRecord
 {
     public long Id { get; init; }
     public required string ServerName { get; init; }

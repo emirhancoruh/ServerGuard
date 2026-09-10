@@ -5,7 +5,7 @@ namespace ServerGuard.Api.Data.Entities;
 /// <summary>
 /// SecurityEventDto'nun veritabanı karşılığı. Id ve CreatedAt yalnızca kalıcı katmana aittir.
 /// </summary>
-public sealed class SecurityEvent
+public sealed class SecurityEvent : IRetainedRecord
 {
     public long Id { get; init; }
     public required string ServerName { get; init; }
