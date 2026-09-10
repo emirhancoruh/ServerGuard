@@ -1,0 +1,31 @@
+using FluentValidation;
+using Microsoft.AspNetCore.Mvc;
+using ServerGuard.Api.Contracts;
+using ServerGuard.Api.Monitoring;
+using ServerGuard.Shared;
+using ServerGuard.Shared.Dtos;
+
+namespace ServerGuard.Api.Controllers;
+
+[ApiController]
+[Route(ApiRoutes.Overview)]
+public sealed class OverviewController(
+    IValidator<TrafficRangeQuery> validator,
+    IMonitoringOverviewService overviewService) : ControllerBase
+{
+    [HttpGet]
+    [ProducesResponseType<MonitoringOverviewDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> Get([FromQuery] TrafficRangeQuery query, CancellationToken cancellationToken)
+    {
+        var validation = await validator.ValidateAsync(query, cancellationToken);
+        if (!validation.IsValid)
+        {
+            return ValidationProblem(new ValidationProblemDetails(validation.ToDictionary()));
+        }
+
+        var overview = await overviewService.GetOverviewAsync(query.ServerName, query.Minutes, cancellationToken);
+
+        return Ok(overview);
+    }
+}

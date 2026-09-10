@@ -8,7 +8,7 @@ public interface ITrafficLogRepository
     Task<TrafficLog> AddAsync(TrafficLog trafficLog, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Verilen aralıktaki istekleri eşit dilimlere bölerek sayar.
+    /// Verilen aralıktaki istekleri eşit dilimlere bölerek HTTP durum sınıfına göre sayar.
     /// İstek gelmeyen dilimler sıfır sayacıyla doldurulur.
     /// </summary>
     Task<IReadOnlyList<TrafficTimelinePointDto>> GetTimelineAsync(
@@ -25,4 +25,28 @@ public interface ITrafficLogRepository
         DateTimeOffset to,
         int take,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// İstek yolu ön ekine göre servis bazında sağlık özeti döner; en bozuk servis başta olur.
+    /// </summary>
+    Task<IReadOnlyList<ServiceHealthDto>> GetServiceHealthAsync(
+        string? serverName,
+        DateTimeOffset from,
+        DateTimeOffset to,
+        CancellationToken cancellationToken);
+
+    /// <summary>Verilen aralığın toplam trafik istatistikleri.</summary>
+    Task<TrafficTotals> GetTotalsAsync(
+        string? serverName,
+        DateTimeOffset from,
+        DateTimeOffset to,
+        CancellationToken cancellationToken);
 }
+
+/// <summary>Genel bakış için toplanmış trafik sayaçları.</summary>
+public sealed record TrafficTotals(
+    int RequestCount,
+    int ClientErrorCount,
+    int ServerErrorCount,
+    double AverageResponseTimeMs,
+    long MaxResponseTimeMs);

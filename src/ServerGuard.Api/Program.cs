@@ -5,6 +5,7 @@ using ServerGuard.Api.Configuration;
 using ServerGuard.Api.Data;
 using ServerGuard.Api.Detection;
 using ServerGuard.Api.ErrorHandling;
+using ServerGuard.Api.Monitoring;
 using ServerGuard.Api.Notifications;
 using ServerGuard.Api.Realtime;
 using ServerGuard.Api.Reputation;
@@ -26,6 +27,7 @@ builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddValidatorsFromAssemblyContaining<ServerMetricDtoValidator>();
 builder.Services.AddPersistence(builder.Configuration);
+builder.Services.AddMonitoring(builder.Configuration);
 builder.Services.AddIpReputation(builder.Configuration);
 builder.Services.AddAlertNotifications(builder.Configuration);
 builder.Services.AddDetection(builder.Configuration);
@@ -42,7 +44,13 @@ if (app.Environment.IsDevelopment())
     app.MapOpenApi();
 }
 
-app.UseHttpsRedirection();
+// Geliştirmede HTTP'ye izin verilir. Aksi halde aynı ağdaki agent'lar HTTPS'e yönlendirilir
+// ve geliştirme sertifikası yalnızca bu makinede güvenilir olduğu için bağlanamazlar.
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
+
 app.UseCors(WebClientCors.PolicyName);
 
 app.MapControllers();

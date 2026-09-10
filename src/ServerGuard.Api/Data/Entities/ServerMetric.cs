@@ -10,5 +10,10 @@ public sealed class ServerMetric
     public required double CpuUsagePercent { get; init; }
     public required double RamUsagePercent { get; init; }
     public required DateTimeOffset Timestamp { get; init; }
+
+    /// <summary>
+    /// En dolu diskin boş alan yüzdesi. Bu ölçümü göndermeyen eski agent'lar için <c>null</c>.
+    /// </summary>
+    public double? DiskFreePercent { get; init; }
     public required DateTimeOffset CreatedAt { get; init; }
 }

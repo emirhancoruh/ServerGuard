@@ -11,6 +11,7 @@ public static class ServerMetricMapper
         CpuUsagePercent = dto.CpuUsagePercent,
         RamUsagePercent = dto.RamUsagePercent,
         Timestamp = dto.Timestamp,
+        DiskFreePercent = dto.DiskFreePercent,
         CreatedAt = createdAt
     };
 }

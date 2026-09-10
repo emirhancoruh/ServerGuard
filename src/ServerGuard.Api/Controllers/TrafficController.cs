@@ -16,6 +16,7 @@ public sealed class TrafficController(
     IValidator<TrafficLogDto> validator,
     IValidator<TrafficTimelineQuery> timelineValidator,
     IValidator<TopClientIpQuery> topClientIpValidator,
+    IValidator<TrafficRangeQuery> rangeValidator,
     ITrafficLogRepository repository,
     IMonitoringBroadcaster broadcaster,
     ITrafficAnomalyDetectionService anomalyDetection,
@@ -84,6 +85,24 @@ public sealed class TrafficController(
             cancellationToken);
 
         return Ok(topClientIps);
+    }
+
+    [HttpGet(ApiRoutes.ServiceHealthSegment)]
+    [ProducesResponseType<IReadOnlyList<ServiceHealthDto>>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> GetServiceHealth([FromQuery] TrafficRangeQuery query, CancellationToken cancellationToken)
+    {
+        var validation = await rangeValidator.ValidateAsync(query, cancellationToken);
+        if (!validation.IsValid)
+        {
+            return ValidationProblem(new ValidationProblemDetails(validation.ToDictionary()));
+        }
+
+        var (from, to) = ResolveRange(query.Minutes);
+
+        var services = await repository.GetServiceHealthAsync(query.ServerName, from, to, cancellationToken);
+
+        return Ok(services);
     }
 
     /// <summary>Sorgu aralığını şu andan geriye doğru hesaplar.</summary>
