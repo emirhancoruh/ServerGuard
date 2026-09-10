@@ -15,7 +15,9 @@ Yayınlanan klasördeki `appsettings.json` dosyasında **her sunucuda farklı ol
 |---|---|---|
 | `Agent:ServerName` | **Her sunucuda benzersiz olmalı.** Panelde bu isimle görünür. | `"web-01"` / `"db-01"` |
 | `Agent:ApiBaseUrl` | Merkezî Api'nin adresi. Api başka bir makinedeyse `localhost` **olmaz**. | `"http://10.0.0.5:5190"` |
-| `Agent:Traffic:LogDirectory` | O sunucudaki IIS sitesinin log klasörü. Site kimliği farklıysa `W3SVC` numarası da farklıdır. | `"C:\\inetpub\\logs\\LogFiles\\W3SVC2"` |
+| `Agent:ApiKey` | **Zorunlu.** API'nin bu agent'ı tanıdığı anahtar; her sunucuya ayrı verilir. | `"ServerGuard.Tools new-key" çıktısı` |
+| `Agent:Traffic:LogRoot` | Sunucuda birden fazla IIS sitesi varsa log kök dizini. Altındaki tüm siteler izlenir. | `"C:\\inetpub\\logs\\LogFiles"` |
+| `Agent:Traffic:LogDirectory` | Tek site izlenecekse o sitenin klasörü (`LogRoot` boşken kullanılır). | `"C:\\inetpub\\logs\\LogFiles\\W3SVC2"` |
 
 Geri kalan ayarlar (toplama aralıkları, kuyruk kapasiteleri, eşikler) genellikle olduğu gibi bırakılabilir.
 
@@ -26,6 +28,7 @@ Geri kalan ayarlar (toplama aralıkları, kuyruk kapasiteleri, eşikler) genelli
   "Agent": {
     "ServerName": "db-01",
     "ApiBaseUrl": "http://10.0.0.5:5190",
+    "ApiKey": "ServerGuard.Tools new-key ile uretilen anahtar",
     "Metrics": {
       "Enabled": true,
       "CollectionInterval": "00:00:10",
@@ -38,6 +41,7 @@ Geri kalan ayarlar (toplama aralıkları, kuyruk kapasiteleri, eşikler) genelli
     },
     "Traffic": {
       "Enabled": true,
+      "LogRoot": "C:\\inetpub\\logs\\LogFiles",
       "LogDirectory": "C:\\inetpub\\logs\\LogFiles\\W3SVC1",
       "FilePattern": "u_ex*.log",
       "OffsetFilePath": "traffic-offset.json",
@@ -57,6 +61,27 @@ Geri kalan ayarlar (toplama aralıkları, kuyruk kapasiteleri, eşikler) genelli
 > sitede bu, kuruluma tek seferlik büyük bir yük bindirir ve geçmiş trafik için de anomali alarmı
 > üretebilir. İstemiyorsanız `false` yapın.
 
+> **`LogRoot` verilirse** altındaki `W3SVC*` klasörlerinin tümü izlenir ve `LogDirectory` yok sayılır.
+> Çok siteli bir IIS sunucusunda tek ayarla bütün siteler kapsanır; sonradan açılan siteler
+> `DirectoryRescanInterval` (varsayılan 10 dk) içinde kendiliğinden yakalanır.
+
+### API anahtarı
+
+Anahtar API sunucusunda üretilir ve orada tanımlı olmalıdır:
+
+```bash
+dotnet run --project src/ServerGuard.Tools -- new-key --name SERVER11 --index 1
+```
+
+Çıktıdaki `Security__Ingest__ApiKeys__1__*` satırları API'nin ortam değişkenlerine, `Agent:ApiKey`
+değeri ise bu sunucunun `appsettings.json` dosyasına yazılır.
+
+> **Anahtar tanımlı değilse agent hiç açılmaz** ve sebebini log'a yazar. Anahtarsız bir agent tek bir
+> kaydı bile teslim edemez; sessizce çalışıp veri kaybetmesindense açılışta durması yeğdir.
+
+> Her sunucuya **ayrı anahtar** verin. Biri sızarsa yalnızca o iptal edilir, diğer sunucular veri
+> göndermeyi sürdürür.
+
 ---
 
 ## 2. Yayınlama (publish)
@@ -64,7 +89,7 @@ Geri kalan ayarlar (toplama aralıkları, kuyruk kapasiteleri, eşikler) genelli
 Geliştirme makinesinde:
 
 ```bash
-dotnet publish src/ServerGuard.Agent -c Release -o publish/agent
+powershell -ExecutionPolicy Bypass -File .\deploy\Yayinla.ps1
 ```
 
 `publish/agent` klasörünü hedef sunucuya kopyalayın, örneğin `C:\ServerGuard\Agent` altına.
@@ -190,19 +215,21 @@ sc.exe query ServerGuard.Agent
 
 `STATE : 4 RUNNING` görmelisiniz.
 
-2. **Loglar ne diyor?** Agent, Windows Service olarak çalışırken Event Viewer → Windows Logs →
-   Application altına yazar. Şu satırları arayın:
+2. **Loglar ne diyor?** Agent kendi klasöründeki `logs` dizinine yazar
+   (`C:\ServerGuard\Agent\logs\agent-YYYYMMDD.log`). Şu satırları arayın:
    - `Metric collector started. Server=...`
    - `Security event watcher started.` (yetki yoksa bunun yerine Event Log Readers uyarısı)
-   - `Traffic log watcher started.` (IIS yoksa yol uyarısı)
+   - `Traffic log watcher started. ... Directories=N` (IIS yoksa yol uyarısı)
+   - `Watching IIS log directory. Directory=...` (izlenen her klasör için bir satır)
 
-3. **Api sunucusunda sunucu göründü mü?**
+3. **Api sunucusunda sunucu göründü mü?** Sorgu uçları oturum gerektirdiğinden en pratik yol
+   doğrulama aracıdır; sunucu listesini de yazar:
 
 ```bash
-curl "http://10.0.0.5:5190/api/servers"
+ServerGuard.Tools.exe check --url http://10.0.0.5:5190 --user admin --ingest-key "BU-SUNUCUNUN-ANAHTARI"
 ```
 
-Yeni `ServerName` listede olmalı.
+`Agent anahtari gecerli mi` ve `Sunucu durumlari` satırlarına bakın; yeni `ServerName` listede olmalı.
 
 4. **Panelde:** sağ üstteki **Sunucu** listesinde yeni sunucu belirmeli. Seçtiğinizde tüm ekranlar
    (CPU/RAM kartları, trafik grafiği, top IP tablosu, alarm listesi) yalnızca o sunucuyu göstermeli.
@@ -216,9 +243,12 @@ Yeni `ServerName` listede olmalı.
 
 | Belirti | Olası sebep |
 |---|---|
-| Servis başlıyor sonra hemen duruyor | `appsettings.json` hatalı: `ApiBaseUrl` eksik veya bir ayar izin verilen aralığın dışında. Konfigürasyon açılışta doğrulanır ve hata Event Viewer'a yazılır. |
+| Servis başlıyor sonra hemen duruyor | `appsettings.json` hatalı: `ApiKey` veya `ApiBaseUrl` eksik ya da bir ayar izin verilen aralığın dışında. Konfigürasyon açılışta doğrulanır; sebep `logs` klasöründeki dosyanın ilk satırında yazar. |
+| Log'da `Backend rejected the agent API key` | `Agent:ApiKey`, API'deki `Security:Ingest:ApiKeys` listesinde yok. Kayıtlar kuyrukta bekler, anahtar düzeltilince gönderilir. |
+| Log'da `Backend rate limit reached` | Agent hız sınırına takıldı. Geçicidir, kayıt atılmaz. Sürekli oluyorsa `RateLimiting:IngestPermitLimit` değerini yükseltin. |
 | Panelde sunucu görünmüyor | Agent Api'ye ulaşamıyor (ağ/güvenlik duvarı) ya da `ApiBaseUrl` yanlış. |
 | İki sunucu panelde tek satır gibi görünüyor | İkisinde de `ServerName` aynı. Her sunucuda benzersiz olmalı. |
 | Güvenlik olayları gelmiyor | Servis hesabı Event Log Readers grubunda değil. |
-| Trafik verisi gelmiyor | `LogDirectory` yanlış, ya da IIS logları henüz diske yazılmadı (IIS tamponu periyodik boşaltır). |
+| Trafik verisi gelmiyor | `LogRoot`/`LogDirectory` yanlış, ya da IIS logları henüz diske yazılmadı (IIS tamponu periyodik boşaltır). |
+| Bazı siteler panelde yok | `LogRoot` verilmemiş, yalnızca tek klasör izleniyor. Log kök dizinini verin. |
 | Trafik verisi çok gecikmeli geliyor | IIS log tampon boşaltma süresi uzun. IIS Yönetimi → Logging → log dosyası ayarlarından kısaltın. |

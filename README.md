@@ -7,17 +7,20 @@ başarısız/başarılı oturum açma girişimleri (saldırı tespiti) ve sunucu
 ## Mimari
 
 ```
-┌──────────────────┐   HTTP (DTO)   ┌──────────────────┐      ┌──────────┐
-│ ServerGuard.Agent│ ─────────────► │  ServerGuard.Api │ ───► │  MSSQL   │
-│ (her sunucuda)   │                │ (merkezi backend)│      └──────────┘
-└────────┬─────────┘                └───┬────────┬─────┘
-         │                              │        │ SignalR (canlı yayın)
-         └──────► ServerGuard.Shared ◄──┘        ▼
-                  (DTO / sözleşmeler)     ┌──────────────────┐
-                                          │ ServerGuard.Web  │
-                                          │ (Angular panel)  │
-                                          └──────────────────┘
+┌──────────────────┐  X-ServerGuard-Key  ┌──────────────────┐      ┌──────────┐
+│ ServerGuard.Agent│ ──────────────────► │  ServerGuard.Api │ ───► │  MSSQL   │
+│ (her sunucuda)   │                     │ (merkezi backend)│      └──────────┘
+└────────┬─────────┘                     └───┬────────┬─────┘
+         │                                   │        │ SignalR (canlı yayın)
+         └──────► ServerGuard.Shared ◄───────┘        ▼
+                  (DTO / sözleşmeler)          ┌──────────────────┐
+                                    Bearer JWT │ ServerGuard.Web  │
+                                    ◄───────── │ (Angular panel)  │
+                                               └──────────────────┘
 ```
+
+Agent'lar API anahtarıyla **yazar**, panel oturum token'ıyla **okur**. İki yol ayrıdır: agent
+anahtarı hiçbir sorgu ucunu açmaz, panel token'ı hiçbir veri yazamaz.
 
 | Proje | Tür | Sorumluluk |
 |---|---|---|
@@ -25,6 +28,7 @@ başarısız/başarılı oturum açma girişimleri (saldırı tespiti) ve sunucu
 | `ServerGuard.Api` | ASP.NET Core Web API | Agent'lardan veri alır, EF Core ile MSSQL'e yazar, SignalR ile panele canlı yayınlar. |
 | `ServerGuard.Shared` | Class Library | Agent ile Api arasında paylaşılan `record` DTO'lar, enum'lar, endpoint sözleşmesi (`ApiRoutes`) ve doğrulama sınırları (`MetricConstraints`). |
 | `ServerGuard.Web` | Angular 21 | Monitoring paneli. Hub'a bağlanır, her sunucu için CPU/RAM gauge'larını canlı günceller. |
+| `ServerGuard.Tools` | Konsol uygulaması | Kurulum sırlarını üretir ve çalışan bir API'yi dışarıdan doğrular. Sistemin çalışması için gerekli değildir. |
 
 ### Bağımlılık yönü
 
@@ -40,26 +44,218 @@ Controller  →  IValidator (FluentValidation)  →  IRepository  →  DbContext
 
 - **Global hata yönetimi:** `IExceptionHandler` ile tüm unhandled exception'lar yakalanır, detay Serilog'a, kullanıcıya kısa `ProblemDetails`.
 - **Dayanıklılık:** `EnableRetryOnFailure` ile geçici DB kopmalarında otomatik yeniden deneme.
-- **Health:** `GET /health` uygulama ve veritabanı bağlantısını kontrol eder.
+- **Health:** `GET /health` yalnızca sürecin ayakta olduğunu söyler; `GET /health/ready` veritabanına da dokunur.
+- **Yetkilendirme:** Her uç bir politikaya bağlıdır — `Ingest` (agent anahtarı) veya `Panel` (oturum token'ı).
+- **Hız sınırlama:** İstemci başına ayrılmış sayaçlar; bir agent'ın veya kullanıcının aşırı isteği diğerlerini etkilemez.
+- **Loglama:** Konsol ve `logs/` klasöründe günlük döndürülen dosya. IIS altında konsol çıktısı hiçbir yere gitmediğinden dosya zorunludur.
 
 ### Endpoint'ler
 
-| Method | Yol | Açıklama | Yanıt |
-|---|---|---|---|
-| `GET` | `/health` | Uygulama + DB sağlık kontrolü | 200 Healthy |
-| `GET` | `/api/servers` | Sunucuları durumu (Online/Stale/Offline), son görülme ve CPU/RAM/disk ile döner | 200 dizi / 400 doğrulama hatası |
-| `GET` | `/api/overview` | Tek bakışta durum özeti: sunucular, hata oranı, gecikme, alarmlar | 200 özet / 400 doğrulama hatası |
-| `POST` | `/api/metrics` | `ServerMetricDto` kaydeder ve panele yayınlar | 201 `{ id }` / 400 doğrulama hatası |
-| `POST` | `/api/security-events` | `SecurityEventDto` kaydeder ve panele yayınlar | 201 `{ id }` / 400 doğrulama hatası |
-| `GET` | `/api/alerts` | Alarmları filtreleyip sayfalayarak döner | 200 `PagedResult` / 400 doğrulama hatası |
-| `POST` | `/api/traffic` | `TrafficLogDto` kaydeder ve panele yayınlar | 201 `{ id }` / 400 doğrulama hatası |
-| `GET` | `/api/traffic/timeline` | İstek sayısını zaman dilimlerine bölerek döner | 200 dizi / 400 doğrulama hatası |
-| `GET` | `/api/traffic/top-ips` | En çok istek gönderen adresler | 200 dizi / 400 doğrulama hatası |
-| `GET` | `/api/traffic/services` | Servis bazında istek, 4xx/5xx, hata oranı ve yanıt süresi | 200 dizi / 400 doğrulama hatası |
-| `GET` | `/api/reports/summary` | Tarih aralığının özeti (istek, ortalama CPU/RAM, alarm kırılımı) | 200 özet / 400 doğrulama hatası |
-| `WS` | `/hubs/monitoring` | SignalR hub. `ReceiveMetric`, `ReceiveSecurityEvent` ve `ReceiveAlert` event'lerini yayınlar | — |
+| Method | Yol | Yetki | Açıklama | Yanıt |
+|---|---|---|---|---|
+| `GET` | `/health` | açık | Sürecin ayakta olduğunu söyler; dış bağımlılığa dokunmaz | 200 Healthy |
+| `GET` | `/health/ready` | açık | Veritabanı erişimini de dener | 200 Healthy / 503 |
+| `POST` | `/api/auth/login` | açık | Kimlik doğrular, kısa ömürlü token döner | 200 token / 401 / 400 |
+| `GET` | `/api/auth/me` | Panel | Geçerli token'ın sahibini döner | 200 kullanıcı / 401 |
+| `GET` | `/api/servers` | Panel | Sunucuları durumu (Online/Stale/Offline), son görülme ve CPU/RAM/disk ile döner | 200 dizi / 400 doğrulama hatası |
+| `GET` | `/api/overview` | Panel | Tek bakışta durum özeti: sunucular, hata oranı, gecikme, alarmlar | 200 özet / 400 doğrulama hatası |
+| `POST` | `/api/metrics` | Ingest | `ServerMetricDto` kaydeder ve panele yayınlar | 201 `{ id }` / 400 doğrulama hatası |
+| `POST` | `/api/security-events` | Ingest | `SecurityEventDto` kaydeder ve panele yayınlar | 201 `{ id }` / 400 doğrulama hatası |
+| `GET` | `/api/alerts` | Panel | Alarmları filtreleyip sayfalayarak döner | 200 `PagedResult` / 400 doğrulama hatası |
+| `POST` | `/api/traffic` | Ingest | `TrafficLogDto` kaydeder ve panele yayınlar | 201 `{ id }` / 400 doğrulama hatası |
+| `GET` | `/api/traffic/timeline` | Panel | İstek sayısını zaman dilimlerine bölerek döner | 200 dizi / 400 doğrulama hatası |
+| `GET` | `/api/traffic/top-ips` | Panel | En çok istek gönderen adresler | 200 dizi / 400 doğrulama hatası |
+| `GET` | `/api/traffic/services` | Panel | Servis bazında istek, 4xx/5xx, hata oranı ve yanıt süresi | 200 dizi / 400 doğrulama hatası |
+| `GET` | `/api/reports/summary` | Panel | Tarih aralığının özeti (istek, ortalama CPU/RAM, alarm kırılımı) | 200 özet / 400 doğrulama hatası |
+| `WS` | `/hubs/monitoring` | Panel | SignalR hub. `ReceiveMetric`, `ReceiveSecurityEvent` ve `ReceiveAlert` event'lerini yayınlar | — |
 
 Enum'lar JSON'da adlarıyla taşınır (`"eventType": "FailedLogin"`); sayısal değerler de kabul edilir.
+
+## Kimlik doğrulama ve yetkilendirme
+
+Hiçbir uç açık değildir. İki ayrı yol vardır ve birbirinin yerine geçemez:
+
+| Yol | Kim kullanır | Nasıl taşınır | Ne yapabilir |
+|---|---|---|---|
+| **Ingest** | Agent | `X-ServerGuard-Key` header'ı | Yalnızca veri yazar |
+| **Panel** | Web paneli / kullanıcı | `Authorization: Bearer <token>` | Yalnızca veri okur |
+
+Bu ayrım bilinçlidir: agent anahtarı sızsa bile alarmlarınız okunamaz, panel token'ı sızsa bile
+sahte metrik yazılamaz.
+
+Yalnızca `GET /health`, `GET /health/ready` ve `POST /api/auth/login` kimlik doğrulaması istemez.
+
+### Agent anahtarları
+
+Her sunucuya ayrı anahtar verilir; biri sızarsa yalnızca o iptal edilir. Anahtarlar sabit zamanlı
+karşılaştırılır ve **hiçbir zaman loglanmaz** — reddedilen istekte yalnızca kaynak adres ve yol yazılır.
+
+Üretmek için:
+
+```bash
+dotnet run --project src/ServerGuard.Tools -- new-key --name SERVER10
+```
+
+| Anahtar (`Security:Ingest`) | Açıklama |
+|---|---|
+| `ApiKeys:N:Name` | Log'larda görünen tanımlayıcı ad (anahtarın kendisi değil) |
+| `ApiKeys:N:Key` | Anahtar — **yalnızca sır deposundan** |
+
+Agent tarafında karşılığı `Agent:ApiKey` ayarıdır. **Anahtar tanımlı değilse agent hiç açılmaz**:
+anahtarsız bir agent tek bir kaydı bile teslim edemez, sessizce çalışıp veri kaybetmesindense
+açılışta durup sebebini yazması yeğdir.
+
+### Panel oturumu
+
+Kullanıcı adı ve parola ile giriş yapılır, karşılığında kısa ömürlü (varsayılan 8 saat) bir JWT döner.
+Parolalar **hiçbir yerde düz metin tutulmaz**; yapılandırmaya yalnızca PBKDF2-SHA256 özeti yazılır.
+
+```bash
+dotnet run --project src/ServerGuard.Tools -- hash-password --user admin
+```
+
+| Anahtar (`Security:Panel`) | Açıklama | Varsayılan |
+|---|---|---|
+| `Users:N:UserName` | Giriş adı | — |
+| `Users:N:PasswordHash` | PBKDF2 özeti — **yalnızca sır deposundan** | — |
+| `MaxFailedAttempts` | Bu sayıda başarısız denemeden sonra hesap kilitlenir | `5` |
+| `LockoutDuration` | Kilit süresi | `00:15:00` |
+| `TrackedAttemptLimit` | Aynı anda izlenecek en fazla başarısız giriş kaydı | `10000` |
+
+Kaba kuvvete karşı üç katman vardır:
+
+1. **Hesap kilidi** — art arda başarısız denemeden sonra hesap geçici olarak kilitlenir.
+2. **IP başına hız sınırı** — dakikada en fazla `RateLimiting:LoginPermitLimit` deneme.
+3. **Pahalı özet** — PBKDF2 210.000 yineleme; her deneme ölçülebilir bir maliyet taşır.
+
+Var olmayan bir kullanıcı için de aynı hesaplama yapılır ve aynı yanıt döner; hangi kullanıcı
+adlarının geçerli olduğu yanıt süresinden veya mesajından anlaşılamaz.
+
+### Token imzası
+
+| Anahtar (`Security:Jwt`) | Açıklama | Varsayılan |
+|---|---|---|
+| `SigningKey` | HMAC-SHA256 imza anahtarı, en az 32 karakter — **yalnızca sır deposundan** | — |
+| `Issuer` / `Audience` | Token'ın kime ait olduğu | `ServerGuard` / `ServerGuard.Panel` |
+| `AccessTokenLifetime` | Token ömrü | `08:00:00` |
+
+Token sunucuda saklanmaz; doğrulama tamamen imzaya dayanır. Bu nedenle tek tek iptal edilemez,
+ömrü kısa tutulur. **Tüm oturumları anında düşürmek için imza anahtarını değiştirip API'yi yeniden
+başlatın** — acil durumda erişimi kesmenin yolu budur.
+
+> Panel token'ı tarayıcıda `localStorage` içinde tutulur; sayfa yenilendiğinde yeniden giriş
+> istenmez. Süresi dolmuş oturum hiç kullanılmaz, sunucu token'ı reddederse panel kendiliğinden
+> giriş ekranına döner.
+
+### Yapılandırma eksikse ne olur
+
+Production ortamında eksik güvenlik yapılandırmasıyla **API açılmaz** ve hangi ortam değişkeninin
+eksik olduğunu tek tek yazar. Geliştirmede açılır ama her eksiği uyarı olarak loglar; depoyu yeni
+klonlayan biri projeyi çalıştırabilsin diye.
+
+### Tarayıcı savunmaları
+
+Her yanıta şu header'lar eklenir: `Content-Security-Policy`, `X-Content-Type-Options`,
+`X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`. `Security:RequireHttps` açıkken
+`Strict-Transport-Security` de eklenir.
+
+| Anahtar (`Security`) | Açıklama | Varsayılan |
+|---|---|---|
+| `RequireHttps` | HTTP'yi HTTPS'e yönlendir ve HSTS gönder | `false` |
+| `Headers:ContentSecurityPolicy` | İçerik güvenlik politikası | aynı kaynak, satır içi script yok |
+| `Headers:HstsMaxAge` | HSTS süresi | `365.00:00:00` |
+
+> `RequireHttps` varsayılan olarak **kapalıdır**. Geçerli bir sertifika kurulmadan açılırsa
+> agent'lar güvenilmeyen sertifika yüzünden bağlanamaz ve HSTS geri alınması zor bir iz bırakır.
+> Sertifika hazır olduğunda açın.
+
+---
+
+## Hız sınırlama
+
+Sınırlar istemci başına ayrılır: kimliği doğrulanmış istekler agent veya kullanıcı adına,
+doğrulanmamış istekler kaynak IP'ye göre sayılır. Böylece bir agent'ın aşırı isteği diğer
+sunucuların verisini kesmez.
+
+| Anahtar (`RateLimiting`) | Açıklama | Varsayılan |
+|---|---|---|
+| `Enabled` | Sınırlamayı aç/kapat | `true` |
+| `Window` | Sayaçların sıfırlandığı pencere | `00:01:00` |
+| `IngestPermitLimit` | Bir agent'ın pencere başına gönderebileceği kayıt | `3000` |
+| `PanelPermitLimit` | Bir oturumun pencere başına yapabileceği sorgu | `600` |
+| `LoginPermitLimit` | Bir IP'nin pencere başına deneyebileceği giriş | `10` |
+| `QueueLimit` | Sınır aşılınca beklemeye alınacak istek | `0` |
+
+Sınıra takılan istek `429` ve `Retry-After` header'ı alır. Agent bunu geçici bir durum sayar:
+kaydı **atmaz**, kuyrukta tutar ve sonra tekrar dener.
+
+> Bu bir DDoS koruması değildir. Amaç, tek bir istemcinin API'yi ve veritabanını tüketmesini
+> engellemektir.
+
+---
+
+## Veri saklama
+
+İzleme sistemi kendi diskini doldurup çökmemelidir. Süresi dolan kayıtlar arka planda, küçük
+partiler hâlinde silinir; tek bir uzun DELETE tabloyu kilitlemez.
+
+| Anahtar (`Maintenance:Retention`) | Açıklama | Varsayılan |
+|---|---|---|
+| `Enabled` | Temizliği aç/kapat | `true` |
+| `RunInterval` | Temizliğin sıklığı | `06:00:00` |
+| `InitialDelay` | Açılıştan sonra ilk turu bekleme süresi | `00:02:00` |
+| `BatchSize` | Tek DELETE ifadesinde silinecek en fazla satır | `5000` |
+| `ServerMetrics` | Metrik saklama süresi | `30.00:00:00` |
+| `TrafficLogs` | Trafik kaydı saklama süresi | `30.00:00:00` |
+| `SecurityEvents` | Güvenlik olayı saklama süresi | `90.00:00:00` |
+| `SecurityAlerts` | Alarm saklama süresi | `365.00:00:00` |
+
+Süreler tablo bazında ayrıdır çünkü değerleri farklıdır: metrik verisi hızla değerini yitirir,
+güvenlik alarmları adli inceleme için uzun süre gerekir.
+
+Silme, agent'ın gönderdiği `Timestamp` alanına göre değil, sunucunun yazdığı `CreatedAt` alanına
+göre yapılır: saati yanlış ayarlanmış veya kötü niyetli bir agent, gelecekteki bir zaman damgası
+göndererek kayıtlarını kalıcı hale getiremesin diye.
+
+---
+
+## Loglama
+
+| Bileşen | Yer | Saklama |
+|---|---|---|
+| API | `<uygulama klasörü>/logs/api-YYYYMMDD.log` | 30 dosya, dosya başına en fazla 50 MB |
+| Agent | `<agent klasörü>/logs/agent-YYYYMMDD.log` | 14 dosya, dosya başına en fazla 20 MB |
+
+Dosya yolu **mutlak** olarak, uygulamanın kendi klasörüne göre hesaplanır. Göreli bir yol IIS
+altında veya Windows hizmeti olarak çalışırken beklenmedik bir klasöre düşerdi; izleme aracının
+kendi log'unun nerede olduğu belirsiz olamaz.
+
+> IIS uygulama havuzu kimliğine `logs` klasörü için yazma yetkisi verilmelidir. Verilmezse uygulama
+> çalışır ama hiçbir log tutulmaz. Bkz. [docs/YAYINLAMA.md](docs/YAYINLAMA.md).
+
+Log'lara parola, API anahtarı veya token yazılmaz.
+
+---
+
+## Doğrulama aracı (ServerGuard.Tools)
+
+Çalışan bir kurulumu **dışarıdan** kontrol eder: yalnızca "cevap veriyor mu" değil, "kapılar kapalı
+mı" sorusunu da yanıtlar. Yetkilendirme yanlışlıkla kaldırılırsa bu araç hemen bildirir.
+
+```bash
+ServerGuard.Tools.exe check --url https://sunucu10:8443 --user admin --ingest-key "..."
+```
+
+| Komut | İşi |
+|---|---|
+| `check` | Sağlık ve güvenlik kurallarını doğrular; başarısız kontrol varsa çıkış kodu `1` |
+| `hash-password` | Panel kullanıcısı için PBKDF2 özeti üretir |
+| `new-key` | Agent için rastgele API anahtarı üretir |
+
+Parola ve anahtar komut satırı yerine `SERVERGUARD_PASSWORD` / `SERVERGUARD_INGEST_KEY` ortam
+değişkenlerinden de okunabilir; böylece kabuk geçmişinde ve süreç listesinde görünmezler.
+
+Hiçbir kontrol veritabanına kayıt yazmaz. Görev Zamanlayıcı'ya günlük görev olarak eklenebilir.
 
 ## Saldırı ve anomali tespiti
 
@@ -267,7 +463,11 @@ Aralıktaki toplam istek sayısını, ortalama CPU/RAM değerlerini ve tipe gör
 > Aralıkta hiç metrik toplanmadıysa ortalamalar `null` döner, sıfır değil. Yanıt ayrıca
 > `metricSampleCount` içerir: ortalamanın kaç ölçüme dayandığını bilmek güvenilirliğin göstergesidir.
 
-Panelin hub'a erişebilmesi için origin'i `Cors:AllowedOrigins` altında tanımlı olmalıdır (varsayılan `http://localhost:4200`).
+Panel API ile aynı kaynaktan servis edildiğinde CORS'a hiç gerek yoktur; üretimde önerilen kurulum
+budur. Ayrı bir origin'den (`ng serve` veya ayrı site) erişiliyorsa origin `Cors:AllowedOrigins`
+altında tanımlı olmalıdır (varsayılan `http://localhost:4200`). Production ortamında loopback
+adresleri bu listeden sessizce elenir: geliştirme adresi yanlışlıkla sunucuya taşınırsa geliştirici
+makinesinde açılmış bir sayfa canlı veriye erişebilirdi.
 
 ### Paylaşılan DTO'lar
 
@@ -279,6 +479,10 @@ Panelin hub'a erişebilmesi için origin'i `Cors:AllowedOrigins` altında tanım
 
 ## Kurulum
 
+> **Sunucuya kurulum yapacaksanız** adım adım rehber ayrı bir dosyadadır:
+> **[docs/YAYINLAMA.md](docs/YAYINLAMA.md)** — IIS sitesi, sırlar, sertifika, güvenlik duvarı ve
+> kurulum sonrası doğrulama. Aşağıdaki adımlar geliştirme makinesi içindir.
+
 ### 1. Connection string (secret olarak)
 
 Connection string koda yazılmaz. Geliştirmede user-secrets kullanılır:
@@ -289,13 +493,49 @@ dotnet user-secrets set "ConnectionStrings:ServerGuard" "Server=localhost;Databa
 
 Production'da aynı anahtar environment variable olarak verilir: `ConnectionStrings__ServerGuard`.
 
-### 2. Veritabanını oluştur
+### 2. Güvenlik sırları (secret olarak)
+
+Panele giriş yapabilmek ve agent'ın veri gönderebilmesi için en az bir kullanıcı ve bir agent
+anahtarı tanımlanmalıdır. Değerleri yardımcı araç üretir:
+
+```bash
+dotnet run --project src/ServerGuard.Tools -- hash-password --user admin
+```
+
+```bash
+dotnet run --project src/ServerGuard.Tools -- new-key --name LOCALDEV
+```
+
+Çıkan değerleri user-secrets'a yazın:
+
+```bash
+dotnet user-secrets set "Security:Panel:Users:0:UserName" "admin" --project src/ServerGuard.Api
+```
+
+```bash
+dotnet user-secrets set "Security:Panel:Users:0:PasswordHash" "URETILEN_OZET" --project src/ServerGuard.Api
+```
+
+```bash
+dotnet user-secrets set "Security:Ingest:ApiKeys:0:Name" "LOCALDEV" --project src/ServerGuard.Api
+```
+
+```bash
+dotnet user-secrets set "Security:Ingest:ApiKeys:0:Key" "URETILEN_ANAHTAR" --project src/ServerGuard.Api
+```
+
+Aynı anahtarı agent tarafında `Agent:ApiKey` olarak tanımlayın.
+
+> Geliştirmede JWT imza anahtarı verilmezse süreç ömrü boyunca geçerli rastgele bir anahtar
+> üretilir; API her yeniden başladığında yeniden giriş gerekir. Production'da anahtar zorunludur.
+
+### 3. Veritabanını oluştur
 
 ```bash
 ASPNETCORE_ENVIRONMENT=Development dotnet ef database update --project src/ServerGuard.Api
 ```
 
-### 3. Çalıştır
+### 4. Çalıştır
 
 ```bash
 dotnet run --project src/ServerGuard.Api
@@ -373,8 +613,13 @@ okur, her satırdan istemci IP, istek yolu, HTTP status ve yanıt süresini çı
 
 Sağlamlık özellikleri:
 
-- **Konum kalıcı.** Son okunan konum `OffsetFilePath` dosyasına atomik olarak yazılır; agent yeniden
-  başlarsa kaldığı yerden devam eder.
+- **Çok siteli sunucu.** `LogRoot` verildiğinde altındaki tüm `W3SVC*` klasörleri izlenir; sonradan
+  açılan siteler `DirectoryRescanInterval` içinde kendiliğinden yakalanır. Her klasörün okuma konumu
+  ayrı tutulur. Bir turda klasörler **sırayla** işlenir: bir klasörün kayıtları teslim edilmeden
+  diğerine geçilmez, böylece teslim edilemeyen kayıtlar başka bir klasörün konumunu ilerletemez.
+- **Konum kalıcı.** Son okunan konumlar `OffsetFilePath` dosyasına atomik olarak yazılır; agent yeniden
+  başlarsa her klasör kaldığı yerden devam eder. Eski sürümden gelen tek klasörlü konum dosyası
+  otomatik dönüştürülür, mükerrer kayıt oluşmaz.
 - **Konum ancak veri ulaşınca ilerler.** Backend erişilemezken konum sabit kalır ve yeni satır
   okunmaz — log dosyası tampon görevi görür, veri kaybolmaz.
 - **Yarım satır okunmaz.** IIS satırı yazarken yakalanırsa satır tamamlanana kadar beklenir.
@@ -396,6 +641,7 @@ IIS kurulu olmayan bir makinede toplayıcı açıklayıcı bir uyarı yazıp dur
 |---|---|---|
 | `Agent:ServerName` | Kayıtlarda görünecek sunucu adı, **her sunucuda benzersiz**. Boşsa makine adı. | makine adı |
 | `Agent:ApiBaseUrl` | Api adresi (zorunlu) | `http://localhost:5190` |
+| `Agent:ApiKey` | API'nin bu agent'ı tanıdığı anahtar (**zorunlu**; boşsa agent açılmaz) | — |
 | `Agent:Metrics:Enabled` | Metrik toplamayı aç/kapat | `true` |
 | `Agent:Metrics:CollectionInterval` | Toplama aralığı | `00:00:10` |
 | `Agent:Metrics:QueueCapacity` | Metrik kuyruğu kapasitesi | `1000` |
@@ -403,11 +649,16 @@ IIS kurulu olmayan bir makinede toplayıcı açıklayıcı bir uyarı yazıp dur
 | `Agent:SecurityEvents:FlushInterval` | Biriken olayların gönderilme sıklığı | `00:00:05` |
 | `Agent:SecurityEvents:QueueCapacity` | Olay kuyruğu kapasitesi | `5000` |
 | `Agent:Traffic:Enabled` | IIS trafik toplamayı aç/kapat | `true` |
-| `Agent:Traffic:LogDirectory` | IIS log klasörü (tek site) | `C:\inetpub\logs\LogFiles\W3SVC1` |
-| `Agent:Traffic:FilePattern` | Log dosyası deseni; en yenisi izlenir | `u_ex*.log` |
-| `Agent:Traffic:OffsetFilePath` | Okuma konumunun saklandığı dosya | `traffic-offset.json` |
+| `Agent:Traffic:LogRoot` | Tüm site log klasörlerini barındıran kök dizin; altındaki siteler kendiliğinden bulunur | boş |
+| `Agent:Traffic:DirectoryPattern` | `LogRoot` altında site klasörlerini eşleyen desen | `W3SVC*` |
+| `Agent:Traffic:LogDirectories` | Açıkça izlenecek klasör listesi (`LogRoot` boşken) | `[]` |
+| `Agent:Traffic:LogDirectory` | Tek siteli kurulum için tekil klasör | `C:\inetpub\logs\LogFiles\W3SVC1` |
+| `Agent:Traffic:FilePattern` | Log dosyası deseni; her klasörde en yenisi izlenir | `u_ex*.log` |
+| `Agent:Traffic:OffsetFilePath` | Okuma konumlarının saklandığı dosya | `traffic-offset.json` |
 | `Agent:Traffic:PollInterval` | Yoklama aralığı (watcher'a ek güvence) | `00:00:02` |
-| `Agent:Traffic:MaxLinesPerCycle` | Tek turda işlenecek en fazla satır | `2000` |
+| `Agent:Traffic:DirectoryRescanInterval` | Yeni site klasörlerinin aranma sıklığı | `00:10:00` |
+| `Agent:Traffic:MaxTrackedDirectories` | İzlenecek en fazla klasör | `50` |
+| `Agent:Traffic:MaxLinesPerCycle` | Tek turda **klasör başına** işlenecek en fazla satır | `2000` |
 | `Agent:Traffic:QueueCapacity` | Trafik kuyruğu kapasitesi | `5000` |
 | `Agent:Traffic:ReadExistingFileOnFirstRun` | İlk açılışta mevcut dosyayı baştan oku | `true` |
 
@@ -418,7 +669,7 @@ Adım adım kurulum, yetkiler ve sorun giderme için: **[docs/AGENT-KURULUM.md](
 Özet:
 
 ```bash
-dotnet publish src/ServerGuard.Agent -c Release -o C:\ServerGuard\Agent
+powershell -ExecutionPolicy Bypass -File .\deploy\Yayinla.ps1
 ```
 
 ```bash
@@ -429,7 +680,14 @@ sc.exe create ServerGuard.Agent binPath= "C:\ServerGuard\Agent\ServerGuard.Agent
 sc.exe start ServerGuard.Agent
 ```
 
-Kaldırmak için `sc.exe stop ServerGuard.Agent` ve `sc.exe delete ServerGuard.Agent`. Servis logları Windows Event Viewer → Application altında görünür.
+`publish\agent` içeriğini sunucudaki `C:\ServerGuard\Agent` klasörüne kopyalayın, `appsettings.json`
+içinde `ServerName`, `ApiBaseUrl` ve `ApiKey` değerlerini doldurun, sonra hizmeti kurun.
+
+Kaldırmak için `sc.exe stop ServerGuard.Agent` ve `sc.exe delete ServerGuard.Agent`.
+Servis logları `C:\ServerGuard\Agent\logs` altındadır.
+
+Kurulu bir agent'ı güncellemek için pakete eklenen `Guncelle.ps1` kullanılır; betik `appsettings.json`
+ve okuma konumunu koruyarak yalnızca program dosyalarını değiştirir.
 
 ## Birden fazla sunucu
 
@@ -486,6 +744,18 @@ Panel `http://localhost:4200` adresinde açılır. Api adresi `src/ServerGuard.W
 > **Lisans notu:** Gauge'lar DevExtreme ile çizilir ve DevExtreme ticari lisanslıdır. Şu an deneme
 > sürümü çalıştığı için panelin üstünde bir lisans bandı görünür. Üretim kullanımı için lisans
 > alınmalı veya gauge'lar ücretsiz bir kütüphaneyle değiştirilmelidir.
+
+## Testler
+
+| Katman | Komut | Kapsam |
+|---|---|---|
+| Backend | `dotnet test tests/ServerGuard.UnitTests` | Parola özetleme, sabit zamanlı karşılaştırma, agent anahtarı doğrulama, yapılandırma denetimi, sunucu sağlık eşikleri |
+| Panel | `npm test --prefix src/ServerGuard.Web` | Ağdan gelen kayıtların çalışma zamanı doğrulaması |
+| Uçtan uca | `ServerGuard.Tools check --url ...` | Çalışan bir kurulumun sağlığı ve güvenlik kuralları |
+
+Birim testleri güvenliğin karar verdiği yerlere odaklanır: bir parola özetinin bozuk gelmesi
+istisna değil "eşleşmedi" üretmeli, bilinmeyen bir agent anahtarı hiçbir koşulda kabul edilmemeli,
+eksik yapılandırma production'da açılışı durdurmalıdır.
 
 ### Sıralama
 

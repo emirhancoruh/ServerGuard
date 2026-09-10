@@ -985,3 +985,211 @@ Servis tablosu ilk açılışta işe yarar bir şey gösterdi: `/services/token`
   vardır; bizimkiler tek seferlik. Sıradaki en değerli eksik bu.
 - Servis satırına tıklayıp detaya inme (drill-down) yok.
 - Uygulama havuzu (app pool) durumu ve Windows servis durumu toplanmıyor.
+
+---
+
+## Prompt 16 — Üretime hazırlık: kimlik doğrulama, dayanıklılık ve doğrulama aracı (2026-09-10)
+
+### Ne istendi
+
+> "10 yıllık senior bir developersin. Bu geliştirmelerin hepsini sonrasında hata yaşamayacağımız
+> şekilde düzenle ve en güvenli hale getir. Proje prod ortamına çıkacak hale gelsin. Eksik kalmasın.
+> Projeye harici bir test servisi de yazabilirsin ileride bir sorun var mı diye ona istek atarak
+> anlayabiliriz."
+
+### Neden
+
+Yayına geçmeden önce yapılan incelemede üç sınıf eksik vardı. İlki güvenlikti ama diğer ikisi
+**sistemin ayakta kalmasıyla** ilgiliydi ve en az onun kadar kritikti:
+
+| # | Bulgu | Sonucu |
+|---|---|---|
+| 1 | Hiçbir uçta kimlik doğrulama yok | Ağdaki herkes alarmları okuyabilir, sahte veri yazabilir |
+| 2 | Log yalnızca konsola yazıyor | IIS altında konsol hiçbir yere gitmez; sorun anında hiç kayıt olmaz |
+| 3 | Veri temizleme yok | Disk dolunca SQL durur, **izleme sisteminin kendisi çöker** |
+| 4 | Hız sınırlama yok | Bozuk bir döngü veya kötü niyetli istek API'yi ve veritabanını tüketebilir |
+| 5 | CORS `localhost:4200`'e sabit | Yayında panel çalışmaz |
+| 6 | HTTPS kararı verilmemiş | Sertifikasız açılırsa agent'lar bağlanamaz |
+
+Ölçülen büyüme, 3. maddenin ne kadar somut olduğunu gösteriyordu: **tek** sunucudan 3 günde 2310
+metrik, 1910 güvenlik olayı, 1308 trafik kaydı.
+
+### Ne yapıldı
+
+**1. İki ayrı yetki yolu.** Agent'lar `X-ServerGuard-Key` header'ıyla yalnızca **yazar**, panel
+`Bearer` token'ıyla yalnızca **okur**. Ayrım bilinçli: agent anahtarı sızsa alarmlar okunamaz,
+panel token'ı sızsa sahte metrik yazılamaz. Her endpoint bir politikaya bağlandı
+(`Ingest` / `Panel`); açık kalan tek uçlar `/health`, `/health/ready` ve `/api/auth/login`.
+
+SignalR hub'ı da aynı yetkiyi ister. Tarayıcı WebSocket el sıkışmasında header gönderemediği için
+token sorgu parametresiyle taşınır; bu kabul **yalnızca hub yoluna** tanındı, aksi halde token'lar
+erişim log'larına ve tarayıcı geçmişine sızardı.
+
+**2. Panel girişi.** Kullanıcı adı + parola, karşılığında 8 saatlik JWT. Parolalar PBKDF2-SHA256
+(210.000 yineleme) özeti olarak saklanır, düz metin hiçbir yerde yok. Kaba kuvvete karşı üç katman:
+hesap kilidi (5 denemede 15 dk), IP başına dakikada 10 deneme, ve pahalı özet.
+
+Var olmayan kullanıcı için de aynı hesaplama yapılır ve aynı yanıt döner — hangi kullanıcı adlarının
+geçerli olduğu yanıt süresinden anlaşılamasın diye.
+
+**3. Açılışta fail-fast.** Production'da eksik güvenlik yapılandırmasıyla API **açılmaz** ve hangi
+ortam değişkeninin eksik olduğunu tek tek yazar. Geliştirmede açılır ama her eksiği uyarır; depoyu
+yeni klonlayan biri projeyi çalıştırabilsin diye.
+
+Agent tarafında da aynısı: `Agent:ApiKey` boşsa agent hiç açılmaz. Anahtarsız bir agent tek bir
+kaydı bile teslim edemez; sessizce çalışıp veri kaybetmesindense açılışta durup sebebini yazması yeğdir.
+
+**4. Dosyaya log.** API ve agent artık kendi klasörlerindeki `logs` dizinine günlük döndürülen
+dosya yazar. Yol **mutlak** olarak, uygulamanın kendi klasörüne göre hesaplanır: Serilog göreli
+yolları sürecin çalışma dizinine göre çözer ve bu dizin IIS altında ya da Windows hizmetinde
+(`C:\Windows\System32`) beklenmedik bir yer olabilir.
+
+**5. Veri saklama.** Süresi dolan kayıtlar 6 saatte bir, 5.000'lik partiler hâlinde silinir; tek bir
+uzun DELETE tabloyu kilitlemez. Süreler tablo bazında ayrı: metrik 30 gün, trafik 30 gün, olay 90
+gün, alarm 365 gün.
+
+Silme, agent'ın gönderdiği `Timestamp` yerine sunucunun yazdığı `CreatedAt` alanına göre yapılır —
+saati yanlış bir agent kayıtlarını kalıcı hale getiremesin diye. Bunun için dört tabloya `CreatedAt`
+indeksi eklendi (`AddRetentionIndexes`); indekssiz her tur tablonun tamamını tarardı.
+
+**6. Hız sınırlama.** İstemci başına ayrılmış sayaçlar: kimliği doğrulanmış istekler agent/kullanıcı
+adına, doğrulanmamış istekler kaynak IP'ye göre. Sınıra takılan istek `429` ve `Retry-After` alır;
+agent bunu **geçici** sayar, kaydı atmaz, kuyrukta tutar.
+
+**7. Tarayıcı savunmaları ve HTTPS.** Her yanıta CSP, `X-Frame-Options`, `X-Content-Type-Options`,
+`Referrer-Policy`, `Permissions-Policy` eklenir. `Security:RequireHttps` açıkken HTTPS yönlendirmesi
+ve HSTS devreye girer — **varsayılan kapalı**, çünkü sertifika hazır olmadan açılırsa agent'lar
+güvenilmeyen sertifika yüzünden bağlanamaz ve HSTS geri alınması zor bir iz bırakır.
+
+**8. Panel API ile aynı kaynaktan.** Angular çıktısı API'nin `wwwroot`'una kopyalanıyor. Tek IIS
+sitesi, tek sertifika, CORS'a hiç gerek yok ve token başka bir kaynağa gitmiyor. CORS yalnızca
+`ng serve` için duruyor; production'da loopback adresleri listeden sessizce eleniyor.
+
+**9. Çok siteli IIS trafik toplama.** Agent tek bir klasör izliyordu; sahada 14 site vardı, yani
+trafiğin çoğu görünmüyordu. `LogRoot` verildiğinde altındaki tüm `W3SVC*` klasörleri izleniyor ve
+sonradan açılan siteler 10 dakika içinde yakalanıyor. Her klasörün okuma konumu ayrı tutuluyor;
+eski tek klasörlü konum dosyası açılışta otomatik dönüştürülüyor.
+
+Kuyruk klasörler arasında paylaşıldığından bir turda klasörler **sırayla** işleniyor: bir klasörün
+kayıtları teslim edilmeden diğerine geçilmiyor. Bu kural olmadan, teslim edilemeyen kayıtlar başka
+bir klasörün konumunu ilerletebilir ve o klasörün satırları kaybolabilirdi.
+
+**10. Harici doğrulama aracı (`ServerGuard.Tools`).** Çalışan bir kurulumu dışarıdan kontrol eder.
+Yalnızca "cevap veriyor mu" değil, **"kapılar kapalı mı"** sorusunu da yanıtlar: token'sız okuma ve
+anahtarsız yazma denemelerinin *reddedilmesi* beklenir. Yetkilendirme yanlışlıkla kaldırılırsa araç
+bunu hemen bildirir.
+
+Hiçbir kontrol veritabanına kayıt yazmaz. Agent anahtarı kasıtlı olarak geçersiz bir gövdeyle
+denenir: anahtar geçerliyse doğrulama hatası (400), geçersizse yetki hatası (401) döner. İki durum
+ayırt edilir ve veri kirlenmez.
+
+Araç ayrıca kurulum sırlarını üretir (`hash-password`, `new-key`); parola ekrana yazılmadan sorulur.
+
+**11. Yayınlama betiği.** `deploy\Yayinla.ps1` paneli derler, `wwwroot`'a kopyalar, üç projeyi
+yayınlar ve **paket içinde sır kalmadığını doğrular** — bir `appsettings.json` içinde dolu bir sır
+bulursa işlem durur. Bu kontrol daha önce elle yakalanan bir hatanın (düz metin `sa` parolası)
+tekrarını engeller.
+
+**12. Agent güncelleme betiği düzeltildi.** Eski betik `appsettings.json` dosyasının **üzerine
+yazıyordu**: her güncellemede sunucuya özel ayarlar kayboluyordu. Yeni betik ayar dosyasını ve okuma
+konumunu korur; yeni zorunlu ayarları (`-ApiKey`, `-LogRoot`) mevcut dosyaya ekler ve yazdığı JSON'u
+servis başlamadan önce doğrular.
+
+### Doğrulama
+
+Her adım gerçek verilerle sınandı; hiçbiri "derleniyor, herhalde çalışır" diye bırakılmadı.
+
+| Test | Sonuç |
+|---|---|
+| `dotnet build` (4 proje) / `ng build` | 0 hata, 0 uyarı |
+| Token'sız `GET /api/servers` | **401** |
+| Anahtarsız `POST /api/metrics` | **401** |
+| Token'sız hub `negotiate` | **401** |
+| Doğru anahtarla ingest | **400** (gövde doğrulaması) → anahtar kabul edildi |
+| Hatalı parola × 5 | 5. denemede **hesap kilitlendi**, sonrakiler parola hiç kontrol edilmeden reddedildi |
+| Hatalı parola × 10+ | **429** (IP başına hız sınırı) |
+| Panel: giriş → panel → çıkış | Çalıştı; çıkışta hub kapandı, oturum silindi |
+| Panel: geçersiz token ile açılış | Otomatik `/login?returnUrl=/` yönlendirmesi |
+| Retention: 12.000 süresi dolmuş satır | 3 partide **silindi**, gerçek veri (2310+1308+1910) **korundu** |
+| Production'da sırsız açılış | **Açılmadı**; eksik 3 ortam değişkenini tek tek yazdı |
+| Agent: `ApiKey` boş | **Açılmadı**, ne yapılacağını yazdı |
+| Agent: yanlış anahtar | Kayıt **atılmadı**, kuyrukta tutuldu; dakikada bir açıklayıcı hata |
+| Çok siteli trafik (3 klasör × 10 satır) | 3 klasör de toplandı, konum dosyasında 3 ayrı kayıt |
+| Aynı dosyaya 5 satır eklendi | Yalnızca yeni 5 satır okundu; **mükerrer yok** (15 satır = 15 tekil) |
+| Eski tek klasörlü konum dosyası | Dönüştürüldü; W3SVC1 kaldığı yerden, diğerleri baştan |
+| Backend kapalıyken agent | Hiçbir konum ilerlemedi; API dönünce **45 satırın tamamı bir kez** yazıldı |
+| Yayınlanmış paket + Production | Panel `wwwroot`'tan servis edildi, giriş ve canlı akış çalıştı |
+| Yayınlanmış agent → yayınlanmış API | Metrikler ulaştı, agent log dosyası oluştu |
+| BOM'lu `appsettings.json` (Guncelle.ps1'in yazdığı biçim) | Sorunsuz okundu |
+| `ServerGuard.Tools check` | **10 başarılı, 0 başarısız**, 2 uyarı (YLNSERVER çevrimdışı) |
+
+### Yol boyunca bulunan gerçek hatalar
+
+Bunlar planlanan iş değildi; test ederken ortaya çıktı.
+
+**1. Production'da panel adresi bozuktu.** `environment.production.ts` içinde `apiBaseUrl: '/'`
+yazıyordu. Yollar zaten `/api/...` ile başladığından sonuç `//api/servers` oluyor ve tarayıcı bunu
+**`api` adlı başka bir sunucu** sanıyor. Değer boş dizeye çekildi. Bu hata yalnızca yayında ortaya
+çıkardı; geliştirmede tam adres kullanıldığı için hiç görünmüyordu.
+
+**2. CSP, DevExtreme temasını tamamen devre dışı bırakıyordu.** Angular'ın `inlineCritical`
+eniyilemesi stil dosyasını `<link media="print" onload="this.media='all'">` ile bağlıyor. CSP satır
+içi olay işleyicilerini engellediği için `onload` hiç çalışmıyor ve **694 KB'lık global stil
+uygulanmadan kalıyordu**. Tarayıcıda `dx-widget` sınıfının hesaplanan yazı tipine bakınca görüldü.
+Çözüm: production yapılandırmasında `inlineCritical: false`. Yayınlanan paketle yeniden doğrulandı.
+
+**3. Yayınlanan agent hiç açılmıyordu.** Serilog paketleri 10.x sürümünden geldiği için derlenen
+kod `Microsoft.Extensions.Hosting.Abstractions` **10.0.0**'ı istiyordu; pakete kopyalanan dosya ise
+projenin geri kalanıyla uyumlu **9.0.19**'du. Sonuç: `FileNotFoundException`, açılışta.
+
+`dotnet build` ve `dotnet run` bunu göstermiyordu — yalnızca **yayınlanmış paket** çalıştırıldığında
+ortaya çıkıyordu. Serilog paketleri .NET 9 ile aynı sürüm hattına (9.0.0) çekildi.
+
+**4. Yayın klasörü kendiliğinden temizlenmiyor.** `dotnet publish -o`, hedef klasördeki eski
+dosyaları silmez. Önceki yayından kalan 10.0.0 sürümlü bir DLL, sürüm düşürüldükten sonra bile
+pakette kalmaya devam etti ve hatayı sürdürdü. `Yayinla.ps1` artık her yayında hedef klasörü
+sıfırlıyor — eski bir sürümün artığının sunucuya taşınması, bulunması en zor hatalardandır.
+
+**5. Agent güncelleme betiği ayarları siliyordu** (yukarıda madde 12).
+
+**6. `MaxTrackedDirectories` isim çakışması** — sabit ve özellik aynı adı taşıyordu; derleme hatası,
+hemen düzeltildi.
+
+### Öğrenilen kavramlar
+- **Kimlik doğrulama tek bir kapı değildir.** Yazma ve okuma ayrı yetkiler ister; ikisini tek
+  anahtara bağlamak, anahtarlardan biri sızdığında kaybı ikiye katlar.
+- **Fail-fast, sessiz çalışmaktan iyidir.** Eksik yapılandırmayla yarı çalışan bir izleme sistemi,
+  hiç açılmayandan tehlikelidir: "veri neden gelmiyor?" sorusu haftalar sonra sorulur.
+- **Geçici hata ile kalıcı hatayı ayırmak.** 401 "veri bozuk" demek değil, "yapılandırma yanlış"
+  demektir. Kaydı atmak veriyi kalıcı olarak kaybettirir; kuyrukta tutmak, anahtar düzeltilince
+  birikmiş kayıtları kurtarır.
+- **Sunucu saatine güvenmek.** Saklama süresi agent'ın gönderdiği zaman damgasına dayansaydı, saati
+  ileri alınmış bir agent kayıtlarını sonsuza kadar yaşatabilirdi.
+- **Göreli yol, ortam değişince kayar.** Log yolu mutlak olmalı; izleme aracının kendi log'unun
+  nerede olduğu belirsiz olamaz.
+- **Güvenlik önlemi başka bir şeyi bozabilir.** CSP doğru bir önlemdi ama panelin stilini kapattı.
+  Önlem eklemek yetmez, eklendikten sonra sistemin hâlâ çalıştığı **görülmelidir**.
+- **Test aracı, olumsuz durumu da sınamalıdır.** "200 döndü" yetmez; "401 dönmesi gerekiyordu ve
+  döndü" asıl kanıttır.
+- **Derlenen kod ile yayınlanan paket aynı şey değildir.** `dotnet run` çalışıyor diye paket de
+  çalışacak diye bir kural yok; paket ayrı bir bağımlılık çözümlemesiyle oluşur ve **ayrıca**
+  denenmelidir.
+- **Paket klasörü birikimlidir.** Temizlenmeyen bir çıktı klasörü, eski sürümün dosyalarını
+  sessizce yeni pakete taşır.
+- **Paylaşılan kaynak, sıra kuralı gerektirir.** Çoklu klasör izlemede tek kuyruk paylaşıldığından,
+  bir klasörün teslim edilmemiş kayıtları başka bir klasörün konumunu ilerletmemelidir.
+
+### Notlar / dikkat
+- **DevExtreme lisansı hâlâ uygulanmadı**; panelin üstünde deneme bandı görünüyor. Yayından önce
+  lisans anahtarı girilmelidir.
+- **Sahadaki agent güncellenmeli.** `YLNSERVER` hâlâ eski sürüm; yeni pakette `Guncelle.ps1`
+  ayarları koruyarak günceller ve `-ApiKey` ile anahtarı ekler.
+- Token iptali yok. Bir kullanıcının erişimini anında kesmek için imza anahtarı değiştirilir; bu
+  tüm oturumları düşürür. Küçük bir ekip için kabul edilebilir, kullanıcı sayısı artarsa gözden
+  geçirilmeli.
+- Panel token'ı `localStorage`'da tutuluyor. XSS durumunda okunabilir; CSP satır içi script'i
+  engelleyerek bu riski azaltır ama sıfırlamaz.
+- Hız sınırı sayaçları bellek içidir. Tek örnekte doğru çalışır; API çoğaltılırsa paylaşılan bir
+  sayaç (ör. Redis) gerekir.
+- **Alarm yaşam döngüsü (yeni/görüldü/çözüldü) hâlâ yok** — Prompt 15'ten devreden en değerli eksik.
+- Servis satırına tıklayıp detaya inme (drill-down) ve uygulama havuzu durumu toplama hâlâ yok.
