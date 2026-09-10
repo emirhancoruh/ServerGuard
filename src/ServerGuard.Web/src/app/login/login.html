@@ -1,0 +1,36 @@
+<div class="login-page">
+  <form class="login-card" (ngSubmit)="submit()">
+    <h1>ServerGuard</h1>
+    <p class="subtitle">İzleme paneline giriş</p>
+
+    <label for="userName">Kullanıcı adı</label>
+    <input
+      id="userName"
+      name="userName"
+      type="text"
+      autocomplete="username"
+      autocapitalize="off"
+      spellcheck="false"
+      required
+      [(ngModel)]="userName"
+      [disabled]="submitting()" />
+
+    <label for="password">Parola</label>
+    <input
+      id="password"
+      name="password"
+      type="password"
+      autocomplete="current-password"
+      required
+      [(ngModel)]="password"
+      [disabled]="submitting()" />
+
+    @if (error(); as message) {
+      <p class="error" role="alert">{{ message }}</p>
+    }
+
+    <button type="submit" [disabled]="submitting()">
+      {{ submitting() ? 'Giriş yapılıyor…' : 'Giriş yap' }}
+    </button>
+  </form>
+</div>

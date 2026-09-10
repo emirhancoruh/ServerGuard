@@ -1,4 +1,4 @@
-import { Injectable, OnDestroy, signal } from '@angular/core';
+import { Injectable, OnDestroy, inject, signal } from '@angular/core';
 import {
   HubConnection,
   HubConnectionBuilder,
@@ -10,6 +10,7 @@ import { Observable, Subject } from 'rxjs';
 import { environment } from '../../../environments/environment';
 import { ApiRoutes, HubEvents } from '../api-routes';
 import { ConnectionState } from '../models/connection-state';
+import { AuthService } from './auth.service';
 import { ServerMetric } from '../models/server-metric';
 import { SecurityAlert, toSecurityAlert } from '../models/security-alert';
 import { TrafficLog, toTrafficLog } from '../models/traffic';
@@ -25,6 +26,8 @@ export class MonitoringHubService implements OnDestroy {
 
   /** İlk bağlantı kurulamazsa tekrar denemeden önce beklenen süre (ms). */
   private static readonly initialRetryDelayMs = 5_000;
+
+  private readonly auth = inject(AuthService);
 
   private readonly metricSubject = new Subject<ServerMetric>();
   private readonly alertSubject = new Subject<SecurityAlert>();
@@ -50,7 +53,12 @@ export class MonitoringHubService implements OnDestroy {
     }
 
     this.connection = new HubConnectionBuilder()
-      .withUrl(`${environment.apiBaseUrl}${ApiRoutes.monitoringHub}`)
+      .withUrl(`${environment.apiBaseUrl}${ApiRoutes.monitoringHub}`, {
+        // Tarayıcı WebSocket el sıkışmasında Authorization header'ı gönderemez; SignalR
+        // bu fonksiyonun döndürdüğü token'ı sorgu parametresiyle taşır. Her yeniden
+        // bağlanmada tekrar çağrılır, böylece yenilenen token kendiliğinden kullanılır.
+        accessTokenFactory: () => this.auth.token() ?? ''
+      })
       .withAutomaticReconnect([...MonitoringHubService.reconnectDelaysMs])
       .configureLogging(environment.production ? LogLevel.Warning : LogLevel.Information)
       .build();
@@ -72,6 +80,29 @@ export class MonitoringHubService implements OnDestroy {
     this.connection.onclose(() => this.connectionStateSignal.set('disconnected'));
 
     await this.connect();
+  }
+
+  /**
+   * Canlı bağlantıyı kapatır. Çıkış yapıldığında çağrılır; aksi halde hub geçersizleşmiş
+   * token'la yeniden bağlanmayı denemeye devam ederdi. Akışlar kapatılmaz, yalnızca
+   * bağlantı bırakılır; yeniden giriş yapıldığında <c>start()</c> temiz bir bağlantı kurar.
+   */
+  async stop(): Promise<void> {
+    const connection = this.connection;
+
+    if (!connection) {
+      return;
+    }
+
+    this.connection = undefined;
+
+    try {
+      await connection.stop();
+    } catch {
+      // Bağlantı zaten kopmuş olabilir; kapanışta hata yutulur.
+    }
+
+    this.connectionStateSignal.set('disconnected');
   }
 
   ngOnDestroy(): void {

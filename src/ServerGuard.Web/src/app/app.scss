@@ -1,5 +1,6 @@
 .main-nav {
   display: flex;
+  align-items: center;
   gap: 0.25rem;
   padding: 0 1.5rem;
   border-bottom: 1px solid #dee2e6;
@@ -21,6 +22,35 @@
       border-bottom-color: #1c7ed6;
       color: #1c7ed6;
       font-weight: 600;
+    }
+  }
+
+  /* Oturum bilgisi satırın sağ ucuna yaslanır. */
+  .session {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-left: auto;
+  }
+
+  .user {
+    color: #5c5f66;
+    font-size: 0.8125rem;
+  }
+
+  .logout {
+    padding: 0.25rem 0.75rem;
+    border: 1px solid #ced4da;
+    border-radius: 0.25rem;
+    background: #fff;
+    color: #5c5f66;
+    font: inherit;
+    font-size: 0.8125rem;
+    cursor: pointer;
+
+    &:hover {
+      border-color: #c92a2a;
+      color: #c92a2a;
     }
   }
 }

@@ -1,6 +1,13 @@
-<nav class="main-nav">
-  <a routerLink="/" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: true }">Panel</a>
-  <a routerLink="/reports" routerLinkActive="active">Rapor</a>
-</nav>
+@if (isAuthenticated()) {
+  <nav class="main-nav">
+    <a routerLink="/" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: true }">Panel</a>
+    <a routerLink="/reports" routerLinkActive="active">Rapor</a>
+
+    <div class="session">
+      <span class="user">{{ userName() }}</span>
+      <button type="button" class="logout" (click)="logout()">Çıkış</button>
+    </div>
+  </nav>
+}
 
 <router-outlet />

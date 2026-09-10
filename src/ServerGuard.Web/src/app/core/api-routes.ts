@@ -4,6 +4,8 @@
  */
 export const ApiRoutes = {
   monitoringHub: '/hubs/monitoring',
+  login: '/api/auth/login',
+  currentUser: '/api/auth/me',
   servers: '/api/servers',
   alerts: '/api/alerts',
   trafficTimeline: '/api/traffic/timeline',
