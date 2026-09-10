@@ -16,6 +16,16 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!--
+      Agent'ın çalışma zamanında ürettiği log okuma konumu. Worker SDK proje klasöründeki
+      tüm .json dosyalarını içerik olarak dahil ettiğinden, bu dosya açıkça dışlanmazsa
+      yayın paketine sızar ve kurulduğu sunucuya başka bir makinenin konumu taşınır.
+    -->
+    <Content Remove="traffic-offset.json" />
+    <None Remove="traffic-offset.json" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\ServerGuard.Shared\ServerGuard.Shared.csproj" />
   </ItemGroup>
 </Project>
