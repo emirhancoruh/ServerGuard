@@ -134,13 +134,15 @@ else {
 }
 
 # --- Backend --------------------------------------------------------------
-# Panel ayri bir sitede yayinlandigi icin API paketinde wwwroot bulunmaz. Onceki
+# Panel ayri bir sitede yayinlandigi icin API paketinde panel dosyalari bulunmaz. Onceki
 # kurulumdan kalmis bir panel kopyasi pakete sizip eski surumu tasimamalidir.
-if (Test-Path $apiWebRoot) {
-    Write-Step 'API wwwroot temizleniyor (panel ayri sitede)'
-    Remove-Item -Path $apiWebRoot -Recurse -Force
-    Write-Ok 'Kaldirildi.'
-}
+#
+# Klasorun kendisi silinmez, yalnizca icerigi bosaltilir: wwwroot hic yoksa tasarim zamani
+# araclari ('dotnet ef migrations script' gibi) uygulamayi ayaga kaldiramaz ve sema betigi
+# uretilemez. Yayinlanan paket bundan etkilenmez.
+Write-Step 'API wwwroot bosaltiliyor (panel ayri sitede)'
+Reset-Directory $apiWebRoot
+Write-Ok 'Bos.'
 
 Write-Step 'Backend yayinlaniyor'
 Reset-Directory $apiOutput
@@ -220,8 +222,13 @@ foreach ($stray in @(
     }
 }
 
-if (Test-Path (Join-Path $apiOutput 'wwwroot')) {
-    throw 'Backend paketinde wwwroot var; panel ayri sitede yayinlanmali.'
+# Bos bir wwwroot klasoru sorun degil; icinde panel dosyasi olmasi sorundur.
+$packagedWebRoot = Join-Path $apiOutput 'wwwroot'
+if (Test-Path $packagedWebRoot) {
+    $leakedPanel = @(Get-ChildItem $packagedWebRoot -Recurse -File)
+    if ($leakedPanel.Count -gt 0) {
+        throw "Backend paketinde $($leakedPanel.Count) panel dosyasi var; panel ayri sitede yayinlanmali."
+    }
 }
 Write-Ok 'Paket temiz.'
 
