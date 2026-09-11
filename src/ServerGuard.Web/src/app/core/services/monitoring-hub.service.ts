@@ -14,6 +14,7 @@ import { AuthService } from './auth.service';
 import { ServerMetric } from '../models/server-metric';
 import { SecurityAlert, toSecurityAlert } from '../models/security-alert';
 import { TrafficLog, toTrafficLog } from '../models/traffic';
+import { API_BASE_URL } from '../runtime-config';
 
 /**
  * MonitoringHub'a bağlanır ve gelen verileri Observable olarak yayınlar.
@@ -27,6 +28,7 @@ export class MonitoringHubService implements OnDestroy {
   /** İlk bağlantı kurulamazsa tekrar denemeden önce beklenen süre (ms). */
   private static readonly initialRetryDelayMs = 5_000;
 
+  private readonly apiBaseUrl = inject(API_BASE_URL);
   private readonly auth = inject(AuthService);
 
   private readonly metricSubject = new Subject<ServerMetric>();
@@ -53,7 +55,7 @@ export class MonitoringHubService implements OnDestroy {
     }
 
     this.connection = new HubConnectionBuilder()
-      .withUrl(`${environment.apiBaseUrl}${ApiRoutes.monitoringHub}`, {
+      .withUrl(`${this.apiBaseUrl}${ApiRoutes.monitoringHub}`, {
         // Tarayıcı WebSocket el sıkışmasında Authorization header'ı gönderemez; SignalR
         // bu fonksiyonun döndürdüğü token'ı sorgu parametresiyle taşır. Her yeniden
         // bağlanmada tekrar çağrılır, böylece yenilenen token kendiliğinden kullanılır.

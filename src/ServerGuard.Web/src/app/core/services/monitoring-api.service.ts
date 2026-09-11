@@ -2,8 +2,8 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable, map } from 'rxjs';
 
-import { environment } from '../../../environments/environment';
 import { ApiRoutes } from '../api-routes';
+import { API_BASE_URL } from '../runtime-config';
 import {
   MonitoringOverview,
   ServiceHealth,
@@ -18,17 +18,18 @@ export interface MonitoringRangeQuery {
 
 @Injectable({ providedIn: 'root' })
 export class MonitoringApiService {
+  private readonly apiBaseUrl = inject(API_BASE_URL);
   private readonly http = inject(HttpClient);
 
   getOverview(query: MonitoringRangeQuery): Observable<MonitoringOverview | null> {
     return this.http
-      .get<unknown>(`${environment.apiBaseUrl}${ApiRoutes.overview}`, { params: toParams(query) })
+      .get<unknown>(`${this.apiBaseUrl}${ApiRoutes.overview}`, { params: toParams(query) })
       .pipe(map(toMonitoringOverview));
   }
 
   getServiceHealth(query: MonitoringRangeQuery): Observable<ServiceHealth[]> {
     return this.http
-      .get<unknown[]>(`${environment.apiBaseUrl}${ApiRoutes.serviceHealth}`, { params: toParams(query) })
+      .get<unknown[]>(`${this.apiBaseUrl}${ApiRoutes.serviceHealth}`, { params: toParams(query) })
       .pipe(
         map((items) =>
           (items ?? [])

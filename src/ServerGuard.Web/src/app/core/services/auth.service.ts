@@ -2,9 +2,9 @@ import { HttpClient } from '@angular/common/http';
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { Observable, map, tap } from 'rxjs';
 
-import { environment } from '../../../environments/environment';
 import { ApiRoutes } from '../api-routes';
 import { AuthSession, isSessionValid, toAuthSession } from '../models/auth-session';
+import { API_BASE_URL } from '../runtime-config';
 
 /**
  * Panel oturumunu yönetir: giriş, çıkış ve token'ın saklanması.
@@ -18,6 +18,7 @@ export class AuthService {
    */
   private static readonly storageKey = 'serverguard.session';
 
+  private readonly apiBaseUrl = inject(API_BASE_URL);
   private readonly http = inject(HttpClient);
   private readonly sessionSignal = signal<AuthSession | null>(AuthService.restore());
 
@@ -43,7 +44,7 @@ export class AuthService {
 
   login(userName: string, password: string): Observable<void> {
     return this.http
-      .post<unknown>(`${environment.apiBaseUrl}${ApiRoutes.login}`, { userName, password })
+      .post<unknown>(`${this.apiBaseUrl}${ApiRoutes.login}`, { userName, password })
       .pipe(
         map((raw) => {
           const session = toAuthSession(raw);

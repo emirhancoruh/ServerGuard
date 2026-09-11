@@ -1,0 +1,4 @@
+{
+  "_comment": "API adresi. Panel ile API ayni sitede ise bos birakin. Ayri sitelerde API'nin kok adresi yazilir, sondaki egik cizgi olmadan. Ornek: https://api.ornek.local veya http://sunucu10:8091",
+  "apiBaseUrl": ""
+}

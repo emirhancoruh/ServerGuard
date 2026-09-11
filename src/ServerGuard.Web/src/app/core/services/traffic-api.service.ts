@@ -2,8 +2,8 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable, map } from 'rxjs';
 
-import { environment } from '../../../environments/environment';
 import { ApiRoutes } from '../api-routes';
+import { API_BASE_URL } from '../runtime-config';
 import {
   TopClientIp,
   TrafficTimelinePoint,
@@ -18,11 +18,12 @@ export interface TrafficRangeQuery {
 
 @Injectable({ providedIn: 'root' })
 export class TrafficApiService {
+  private readonly apiBaseUrl = inject(API_BASE_URL);
   private readonly http = inject(HttpClient);
 
   getTimeline(query: TrafficRangeQuery & { bucketSeconds?: number }): Observable<TrafficTimelinePoint[]> {
     return this.http
-      .get<unknown[]>(`${environment.apiBaseUrl}${ApiRoutes.trafficTimeline}`, {
+      .get<unknown[]>(`${this.apiBaseUrl}${ApiRoutes.trafficTimeline}`, {
         params: TrafficApiService.toParams(query)
       })
       .pipe(map((items) => TrafficApiService.sanitize(items, toTimelinePoint)));
@@ -30,7 +31,7 @@ export class TrafficApiService {
 
   getTopClientIps(query: TrafficRangeQuery & { take?: number }): Observable<TopClientIp[]> {
     return this.http
-      .get<unknown[]>(`${environment.apiBaseUrl}${ApiRoutes.topClientIps}`, {
+      .get<unknown[]>(`${this.apiBaseUrl}${ApiRoutes.topClientIps}`, {
         params: TrafficApiService.toParams(query)
       })
       .pipe(map((items) => TrafficApiService.sanitize(items, toTopClientIp)));

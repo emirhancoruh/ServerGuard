@@ -487,11 +487,31 @@ Aralıktaki toplam istek sayısını, ortalama CPU/RAM değerlerini ve tipe gör
 > Aralıkta hiç metrik toplanmadıysa ortalamalar `null` döner, sıfır değil. Yanıt ayrıca
 > `metricSampleCount` içerir: ortalamanın kaç ölçüme dayandığını bilmek güvenilirliğin göstergesidir.
 
-Panel API ile aynı kaynaktan servis edildiğinde CORS'a hiç gerek yoktur; üretimde önerilen kurulum
-budur. Ayrı bir origin'den (`ng serve` veya ayrı site) erişiliyorsa origin `Cors:AllowedOrigins`
-altında tanımlı olmalıdır (varsayılan `http://localhost:4200`). Production ortamında loopback
-adresleri bu listeden sessizce elenir: geliştirme adresi yanlışlıkla sunucuya taşınırsa geliştirici
+## Panel ve API ayrı sitelerde
+
+Panel (`ServerGuardClient`) ve backend (`ServerGuard`) ayrı IIS siteleri olarak yayınlanır.
+Panel statik dosyalardan ibarettir; kendi uygulama havuzunda çalışır ve backend'i hiç
+etkilemez. Bunun pratik karşılığı: **panel güncellemesi backend'i yeniden başlatmaz** —
+canlı bağlantılar kopmaz, arka plan işleri (veri temizleme, alarm bildirimi) kesintiye uğramaz.
+
+Ayrı origin olduğu için üç ayar birbirini tutmalıdır:
+
+| Nerede | Ne | Neyi bozar |
+|---|---|---|
+| Backend `web.config` | `Cors__AllowedOrigins__0` = panelin adresi | Eksikse tarayıcı her isteği engeller |
+| Panel `config.json` | `apiBaseUrl` = API'nin adresi | Eksikse panel kendi kendine istek atar |
+| Panel `web.config` | CSP `connect-src` = API'nin `http` ve `ws` adresi | Eksikse tarayıcı bağlantıyı reddeder |
+
+API adresi **derlemeye gömülmez**; panel her açılışta `config.json`'dan okur. HTTPS'e geçişte
+veya sunucu adı değiştiğinde panel yeniden derlenmez, sunucuda tek satır düzenlenir.
+
+Uygulanan CORS listesi açılışta log'a yazılır (`CORS allowed origins: ...`); panel boş
+görünüyorsa ilk bakılacak yer orasıdır. Production'da loopback adresleri listeden elenir ve
+elenenler ayrıca uyarı olarak yazılır — geliştirme adresi sunucuya taşınırsa geliştirici
 makinesinde açılmış bir sayfa canlı veriye erişebilirdi.
+
+> Geliştirmede `ng serve` kullanılırken `config.json` boş bırakılır ve adres
+> `environment.ts`'ten gelir; `Cors:AllowedOrigins` varsayılanı `http://localhost:4200`'dür.
 
 ### Paylaşılan DTO'lar
 

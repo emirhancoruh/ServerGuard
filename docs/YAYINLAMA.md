@@ -1,65 +1,54 @@
 # Yayınlama Rehberi — Adım Adım
 
-ServerGuard'ı **10 numaralı sunucuya** (API + panel + agent) ve **11 numaralı sunucuya**
+ServerGuard'ı **10 numaralı sunucuya** (backend + panel) ve **11 numaralı sunucuya**
 (yalnızca agent) kurmak için sırayla uygulanacak adımlar.
 
 ```
-Sunucu 10                                   Sunucu 11
-├── IIS sitesi: ServerGuard                 └── ServerGuard.Agent (Windows hizmeti)
-│   ├── ServerGuard.Api                            │
-│   └── wwwroot/  (Angular panel)                  │
-├── SQL Server (ServerGuard veritabanı)            │
-└── ServerGuard.Agent (Windows hizmeti)            │
-        │                                          │
-        └──────────► API ◄────────────────────────┘
-                 (X-ServerGuard-Key)
+Sunucu 10                                          Sunucu 11
+├── IIS sitesi: ServerGuardClient  (panel, 8090)   └── ServerGuard.Agent
+│        │  tarayıcıdan                                    │  (Windows hizmeti)
+│        ▼                                                 │
+├── IIS sitesi: ServerGuard        (backend, 8091) ◄───────┘
+│                                     X-ServerGuard-Key
+├── SQL Server (ServerGuard veritabanı)
+└── ServerGuard.Agent (Windows hizmeti)
 ```
 
-Panel API ile **aynı kaynaktan** servis edilir. Bu bilinçli bir tercihtir: tek site, tek sertifika,
-CORS ayarı yok ve oturum token'ı başka bir kaynağa hiç gitmez.
+Panel ve backend **ayrı sitelerdir**. Panel, API'nin adresini çalışma zamanında
+`config.json`'dan okur; adres değiştiğinde sunucuda tek satır düzenlenir, yeniden derleme
+gerekmez.
 
-**Her adımın sonunda bir doğrulama var.** Doğrulama geçmeden bir sonraki adıma geçmeyin; sorunun
-hangi adımda çıktığını bilmek, sonunda hepsini birden aramaktan çok daha kolaydır.
+**Her adımın sonunda bir doğrulama var.** Doğrulama geçmeden bir sonraki adıma geçmeyin;
+sorunun hangi adımda çıktığını bilmek, sonunda hepsini birden aramaktan çok daha kolaydır.
 
-Toplam süre: yaklaşık 1–1,5 saat.
+Toplam süre: yaklaşık 1,5 saat.
 
 ---
 
 ## Adım 0 — Elinizde ne olmalı
 
-Başlamadan önce hazırlayın:
-
 - [ ] Sunucu 10 ve 11'de **yönetici** yetkisi
-- [ ] Sunucu 10 için kullanılacak **port** (örnek: `8443`) — mevcut 14 site ile çakışmamalı
-- [ ] SQL Server örneğinin adı ve orada yeni kullanıcı açma yetkisi
+- [ ] **İki boş port** — örnek: panel `8090`, backend `8091`
+- [ ] SQL Server örneğinin adı ve orada kullanıcı açma yetkisi
 - [ ] Parola yöneticisi (üreteceğiniz sırları oraya kaydedeceksiniz)
 
-**Sunucu 10'da gerekenler:**
+Portların boş olduğunu doğrulayın:
 
-| Gereksinim | Kontrol |
-|---|---|
-| IIS | Zaten kurulu |
-| **ASP.NET Core 9 Hosting Bundle** | Adım 1'de kurulacak |
-| SQL Server | Mevcut örnek kullanılabilir |
-| PowerShell 5.1+ | Windows Server ile geliyor |
+```bash
+%windir%\system32\inetsrv\appcmd list sites
+```
 
-**Sunucu 11'de gereken:** .NET 9 Runtime.
+```bash
+netstat -ano | findstr LISTENING | findstr ":8090 :8091"
+```
+
+İkincisi **hiçbir şey dönmemeli**.
 
 ---
 
-## Adım 1 — Hosting Bundle kurulumu (sunucu 10)
+## Adım 1 — Hosting Bundle (sunucu 10)
 
-IIS, .NET uygulamasını tek başına çalıştıramaz; **ASP.NET Core Module** gerekir ve o da Hosting
-Bundle ile gelir. Bu adım atlanırsa site açılır ama her istek `500.19` veya `500.31` döner.
-
-1. [dotnet.microsoft.com/download/dotnet/9.0](https://dotnet.microsoft.com/download/dotnet/9.0)
-   adresinden **ASP.NET Core Runtime → Hosting Bundle**'ı indirin.
-2. Kurun.
-3. Kurulum bitince IIS'i yeniden başlatın:
-
-```bash
-iisreset
-```
+IIS, .NET uygulamasını tek başına çalıştıramaz; **ASP.NET Core Module** gerekir.
 
 **Doğrulama:**
 
@@ -67,23 +56,26 @@ iisreset
 dotnet --list-runtimes
 ```
 
-Çıktıda hem `Microsoft.AspNetCore.App 9.0.x` hem `Microsoft.NETCore.App 9.0.x` görünmeli.
+Çıktıda **`Microsoft.AspNetCore.App 9.0.x`** olmalı. Yoksa
+[ASP.NET Core 9 Hosting Bundle](https://dotnet.microsoft.com/download/dotnet/9.0) kurup
+`iisreset` yapın.
 
 ```bash
 %windir%\system32\inetsrv\appcmd list config -section:system.webServer/globalModules | findstr AspNetCore
 ```
 
-`AspNetCoreModuleV2` satırı dönmeli. Boş dönerse Hosting Bundle kurulmamış demektir; `iisreset`
-yapıp tekrar bakın.
+`AspNetCoreModuleV2` satırı dönmeli.
+
+> **URL Rewrite modülü** de gerekir — panel sitesindeki derin bağlantılar (`/reports`) onunla
+> çalışır. Sunucunuzda ARR/Server Farms varsa zaten kuruludur.
 
 ---
 
 ## Adım 2 — Veritabanı ve SQL kullanıcısı
 
-**`sa` kullanmayın.** ServerGuard'a ayrı, sınırlı bir hesap açın: bir gün bağlantı dizesi sızarsa
-kayıp yalnızca bu veritabanıyla sınırlı kalır.
+**`sa` kullanmayın.** Bağlantı dizesi bir gün sızarsa kayıp bu veritabanıyla sınırlı kalsın.
 
-1. SQL Server Management Studio'da yeni sorgu açın ve çalıştırın (parolayı kendiniz belirleyin):
+1. SSMS'te çalıştırın (parolayı kendiniz belirleyin):
 
 ```sql
 CREATE DATABASE ServerGuard;
@@ -97,74 +89,60 @@ ALTER ROLE db_datawriter ADD MEMBER serverguard;
 GO
 ```
 
-2. Şemayı oluşturun. Geliştirme makinenizde SQL betiğini üretin:
+2. Şemayı oluşturun. Geliştirme makinenizde betiği üretin:
 
 ```bash
 dotnet ef migrations script --project src/ServerGuard.Api --idempotent --output serverguard-sema.sql
 ```
 
-Üretilen `serverguard-sema.sql` dosyasını SSMS'te `ServerGuard` veritabanı seçiliyken çalıştırın.
+Üretilen dosyayı SSMS'te `ServerGuard` veritabanı seçiliyken çalıştırın.
 
-> `--idempotent`, betiği "zaten uygulanmışları atla" biçiminde üretir; aynı dosyayı iki kez
+> `--idempotent`, "zaten uygulanmışları atla" biçiminde üretir; aynı dosyayı iki kez
 > çalıştırmak zarar vermez. Sonraki sürümlerde de aynı yöntem kullanılır.
 
-> Komut "Build failed" diyorsa API'niz o sırada çalışıyor ve derleme çıktısını kilitliyordur.
+> "Build failed" diyorsa API'niz o sırada çalışıyor ve derleme çıktısını kilitliyordur.
 > API'yi durdurun ya da komuta `--no-build` ekleyin.
 
-Geliştirme makineniz sunucunun SQL'ine doğrudan bağlanabiliyorsa betik üretmeden de yapabilirsiniz:
+**Doğrulama:** SSMS'te şu 5 tablo görünmeli: `ServerMetrics`, `SecurityEvents`,
+`SecurityAlerts`, `TrafficLogs`, `__EFMigrationsHistory`.
 
-```bash
-dotnet ef database update --project src/ServerGuard.Api --connection "Server=SUNUCU10;Database=ServerGuard;User Id=SEMA-YETKILI-HESAP;Password=...;TrustServerCertificate=True;"
-```
-
-**Doğrulama:** SSMS'te `ServerGuard` veritabanı altında şu 5 tablo görünmeli:
-`ServerMetrics`, `SecurityEvents`, `SecurityAlerts`, `TrafficLogs`, `__EFMigrationsHistory`.
-
-> Uygulamanın günlük çalışması için `db_datareader` + `db_datawriter` yeterlidir; şema
-> değişikliğini ayrıca siz uygularsınız. Uygulamanın kendisi hiçbir zaman tablo yaratmaz.
+> Uygulamanın günlük çalışması için `db_datareader` + `db_datawriter` yeterlidir; uygulama
+> hiçbir zaman tablo yaratmaz.
 
 ---
 
 ## Adım 3 — Sırları üretin
 
-Geliştirme makinenizde çalıştırın. **Hiçbirini dosyaya yazmayın**, parola yöneticisine kaydedin.
-
-1. Panel kullanıcısı için parola özeti (parola ekrana yazılmaz):
-
-```bash
-dotnet run --project src/ServerGuard.Tools -- hash-password --user admin
-```
-
-2. Sunucu 10'un agent anahtarı:
+Geliştirme makinenizde veya sunucudaki `Tools` klasöründe. **Hiçbirini dosyaya yazmayın**,
+parola yöneticisine kaydedin.
 
 ```bash
-dotnet run --project src/ServerGuard.Tools -- new-key --name SERVER10 --index 0
+ServerGuard.Tools.exe hash-password --user admin
 ```
-
-3. Sunucu 11'in agent anahtarı:
 
 ```bash
-dotnet run --project src/ServerGuard.Tools -- new-key --name SERVER11 --index 1
+ServerGuard.Tools.exe new-key --name SERVER10 --index 0
 ```
-
-4. Token imza anahtarı (bir `new-key` çıktısı daha):
 
 ```bash
-dotnet run --project src/ServerGuard.Tools -- new-key --name JWT
+ServerGuard.Tools.exe new-key --name SERVER11 --index 1
 ```
 
-**Doğrulama:** Elinizde 4 değer olmalı — 1 parola özeti (`pbkdf2-sha256$...` ile başlar),
-2 agent anahtarı, 1 imza anahtarı.
+```bash
+ServerGuard.Tools.exe new-key --name JWT
+```
 
-> Her sunucuya **ayrı anahtar** verilmesinin sebebi: biri sızarsa yalnızca o iptal edilir, diğer
-> sunucu veri göndermeyi sürdürür.
+**Doğrulama:** Elinizde 4 değer olmalı — 1 parola özeti (`pbkdf2-sha256$...`), 2 agent
+anahtarı, 1 imza anahtarı.
+
+> Her sunucuya **ayrı anahtar**: biri sızarsa yalnızca o iptal edilir.
 
 > İmza anahtarı değiştirilirse **tüm panel oturumları düşer**. Acil durumda erişimi kesmenin
 > yolu da budur.
 
 ---
 
-## Adım 4 — Paketi hazırlayın
+## Adım 4 — Paketleri hazırlayın
 
 Geliştirme makinenizde:
 
@@ -172,104 +150,90 @@ Geliştirme makinenizde:
 powershell -ExecutionPolicy Bypass -File .\deploy\Yayinla.ps1
 ```
 
-Betik sırasıyla: `appsettings.json` dosyalarında sır kalmadığını doğrular, birim testlerini
-çalıştırır, Angular panelini derleyip API'nin `wwwroot`'una kopyalar, üç projeyi de yayınlar
-ve paketi son kez denetler.
+Betik: sır sızıntısı kontrolü → birim testleri → backend publish → Angular build → dört zip.
 
-**Doğrulama:** "Yayin hazir." satırını görün. Üç klasör oluşmuş olmalı:
+**Doğrulama:** `publish\` altında dört zip oluşmalı:
 
-```
-publish\api     → IIS'e kopyalanacak (panel dahil)
-publish\agent   → her iki sunucuya kopyalanacak
-publish\tools   → doğrulama aracı
-```
-
-`publish\api\wwwroot\index.html` dosyasının var olduğunu kontrol edin — yoksa panel servis edilmez,
-API salt veri servisi olarak çalışır.
-
----
-
-## Adım 5 — Dosyaları sunucu 10'a kopyalayın
-
-1. Sunucu 10'da klasörü oluşturun:
-
-```bash
-mkdir C:\inetpub\ServerGuard
-```
-
-2. `publish\api` **içeriğini** (klasörün kendisini değil) buraya kopyalayın.
-
-**Doğrulama:** `C:\inetpub\ServerGuard\ServerGuard.Api.dll`, `web.config` ve `wwwroot\index.html`
-yerinde olmalı.
-
----
-
-## Adım 6 — Uygulama havuzu oluşturun
-
-Yönetici komut isteminde:
-
-```bash
-%windir%\system32\inetsrv\appcmd add apppool /name:ServerGuard /managedRuntimeVersion:"" /managedPipelineMode:Integrated
-```
-
-> `managedRuntimeVersion:""` = **"Yönetilen kod yok"**. .NET Core/9 uygulamaları IIS'in .NET
-> Framework çalışma zamanını kullanmaz; bu değer boş bırakılmazsa uygulama açılmaz.
-
-Ardından izleme uygulamasına özgü dört ayar:
-
-```bash
-%windir%\system32\inetsrv\appcmd set apppool /apppool.name:ServerGuard /processModel.idleTimeout:00:00:00
-```
-
-```bash
-%windir%\system32\inetsrv\appcmd set apppool /apppool.name:ServerGuard /startMode:AlwaysRunning
-```
-
-```bash
-%windir%\system32\inetsrv\appcmd set apppool /apppool.name:ServerGuard /processModel.loadUserProfile:true
-```
-
-```bash
-%windir%\system32\inetsrv\appcmd set apppool /apppool.name:ServerGuard /recycling.periodicRestart.time:00:00:00
-```
-
-Ne işe yaradıkları:
-
-| Ayar | Sebep |
+| Zip | Nereye |
 |---|---|
-| `idleTimeout:00:00:00` | IIS boşta kalan havuzu 20 dakikada kapatır. Kapanınca veri temizleme ve alarm bildirimi gibi arka plan işleri durur. İzleme sistemi hiç uyumamalıdır. |
-| `startMode:AlwaysRunning` | Sunucu yeniden başladığında ilk isteği beklemeden ayağa kalkar. |
-| `loadUserProfile:true` | ASP.NET Core'un anahtar deposu için gerekir; kapalıyken açılışta uyarı üretir. |
-| `periodicRestart.time:00:00:00` | Varsayılan 29 saatte bir geri dönüşüm, panelin canlı bağlantısını gelişigüzel bir saatte koparır. |
+| `ServerGuard-Backend.zip` | Sunucu 10 → `C:\inetpub\ServerGuard` |
+| `ServerGuard-Panel.zip` | Sunucu 10 → `C:\inetpub\ServerGuardClient` |
+| `ServerGuard-Tools.zip` | Sunucu 10 → `C:\ServerGuard\Tools` |
+| `ServerGuard-Agent.zip` | Sunucu 10 ve 11 → `C:\ServerGuard\Agent` |
 
-İsterseniz geri dönüşümü tamamen kapatmak yerine sabit bir saate alın:
+---
 
-```bash
-%windir%\system32\inetsrv\appcmd set apppool /apppool.name:ServerGuard /+recycling.periodicRestart.schedule.[value='03:00:00']
-```
+## Adım 5 — Dosyaları yerleştirin (sunucu 10)
+
+Zip'leri sunucuya alın. Her birine **sağ tık → Özellikler → "Unblock"** işaretleyin.
+
+> Başka makineden gelen dosyalar engellenmiş işaretlenir; kaldırılmazsa içindeki DLL'ler
+> bazı durumlarda yüklenmez.
+
+Sonra her zip'i kendi klasörüne ayıklayın:
+
+| Zip içeriği | Hedef klasör |
+|---|---|
+| `ServerGuard-Backend.zip` | `C:\inetpub\ServerGuard` |
+| `ServerGuard-Panel.zip` | `C:\inetpub\ServerGuardClient` |
+| `ServerGuard-Tools.zip` | `C:\ServerGuard\Tools` |
 
 **Doğrulama:**
 
-```bash
-%windir%\system32\inetsrv\appcmd list apppool ServerGuard /text:*
-```
+| Bulunmalı | Yol |
+|---|---|
+| Backend | `C:\inetpub\ServerGuard\ServerGuard.Api.dll` ve `web.config` |
+| Panel | `C:\inetpub\ServerGuardClient\index.html`, `config.json` ve `web.config` |
+| Araç | `C:\ServerGuard\Tools\ServerGuard.Tools.exe` |
 
-`state:Started`, `managedRuntimeVersion:` (boş) ve `idleTimeout:00:00:00` görünmeli.
+> Backend klasöründe `wwwroot` **olmamalıdır** — panel ayrı sitede.
 
 ---
 
-## Adım 7 — Siteyi oluşturun
+# Backend sitesi
 
-```bash
-%windir%\system32\inetsrv\appcmd add site /name:ServerGuard /bindings:http/*:8443: /physicalPath:"C:\inetpub\ServerGuard"
-```
+## Adım 6 — Backend uygulama havuzu
 
-```bash
-%windir%\system32\inetsrv\appcmd set app /app.name:"ServerGuard/" /applicationPool:ServerGuard
-```
+IIS Yönetimi → **Uygulama Havuzları** → sağ tık → **Uygulama Havuzu Ekle**:
 
-> IIS Yönetimi'nden yapmak isterseniz: **Siteler → sağ tık → Web Sitesi Ekle**. Site adı
-> `ServerGuard`, fiziksel yol `C:\inetpub\ServerGuard`, uygulama havuzu `ServerGuard`, port `8443`.
+| Alan | Değer |
+|---|---|
+| **Name** | `ServerGuard` |
+| **.NET CLR version** | ⚠️ **No Managed Code** |
+| **Managed pipeline mode** | `Integrated` |
+
+> `.NET CLR version` varsayılan `v4.0.30319` gelir ve **yanlıştır**. .NET 9 uygulamaları
+> IIS'in .NET Framework çalışma zamanını kullanmaz; değiştirilmezse her istek `500.30` döner.
+
+Sonra havuza sağ tık → **Advanced Settings** → dört değer:
+
+| Bölüm | Ayar | Değer | Neden |
+|---|---|---|---|
+| General | **Start Mode** | `AlwaysRunning` | Sunucu açılışında ilk isteği beklemeden ayağa kalksın |
+| Process Model | **Idle Time-out (minutes)** | `0` | IIS boştaki havuzu 20 dk'da kapatır; kapanınca veri temizleme ve alarm bildirimi durur |
+| Process Model | **Load User Profile** | `True` | ASP.NET Core anahtar deposu için gerekir |
+| Recycling | **Regular Time Interval (minutes)** | `0` | Varsayılan 29 saatlik geri dönüşüm, canlı bağlantıyı rastgele bir saatte koparır |
+
+**Identity** `ApplicationPoolIdentity` kalsın.
+
+**Doğrulama:** Havuz listesinde `ServerGuard` satırının `.NET CLR V…` sütunu
+**"No Managed Code"** göstermeli.
+
+---
+
+## Adım 7 — Backend sitesi
+
+IIS Yönetimi → **Siteler** → sağ tık → **Web Sitesi Ekle**:
+
+| Alan | Değer |
+|---|---|
+| **Site name** | `ServerGuard` |
+| **Application pool** | **Select…** → `ServerGuard` |
+| **Physical path** | `C:\inetpub\ServerGuard` |
+| **Type / IP / Port** | `http` / `All Unassigned` / `8091` |
+| **Host name** | boş |
+
+> `Application pool` alanını değiştirmeyi atlamayın; `DefaultAppPool` kalırsa `500.30` alırsınız.
 
 **Doğrulama:**
 
@@ -277,38 +241,26 @@ Ne işe yaradıkları:
 %windir%\system32\inetsrv\appcmd list site ServerGuard
 ```
 
-`state:Started` ve `bindings:http/*:8443:` görünmeli.
+`bindings:http/*:8091:,state:Started` görünmeli.
 
 ---
 
-## Adım 8 — Klasör izinleri
+## Adım 8 — Backend log klasörü ve izin
 
-Uygulama kendi log'unu `logs` klasörüne yazar. **Bu izin verilmezse uygulama çalışır ama hiçbir
-log tutulmaz** — sorun çıktığında elinizde kayıt olmaz.
+`C:\inetpub\ServerGuard` içinde **`logs`** klasörü oluşturun. Sağ tık → **Özellikler →
+Güvenlik → Düzenle → Ekle** → **Konumlar…**'dan **bu bilgisayarı** seçin → nesne adına
+`IIS AppPool\ServerGuard` yazın → **Adları Denetle** → **Tamam** → **Değiştir (Modify)**
+işaretleyin → Uygula.
 
-```bash
-mkdir C:\inetpub\ServerGuard\logs
-```
-
-```bash
-icacls "C:\inetpub\ServerGuard\logs" /grant "IIS AppPool\ServerGuard:(OI)(CI)M" /T
-```
-
-**Doğrulama:**
-
-```bash
-icacls "C:\inetpub\ServerGuard\logs"
-```
-
-Çıktıda `IIS AppPool\ServerGuard:(OI)(CI)(M)` satırı görünmeli.
+> Bu izin verilmezse uygulama çalışır ama **hiçbir log tutmaz** — sorun çıktığında elinizde
+> kayıt olmaz, ki bir sonraki adımda tam olarak o log'a bakacağız.
 
 ---
 
-## Adım 9 — Sırları web.config'e girin
+## Adım 9 — Backend sırları (web.config)
 
-`C:\inetpub\ServerGuard\web.config` dosyasını Not Defteri'nde açın. `<aspNetCore ... />` satırını
-bulun ve şu hale getirin (kendi kapanışını `/>` ile yapan tek satırdan, açılış-kapanış çiftine
-dönüştüğüne dikkat edin):
+`C:\inetpub\ServerGuard\web.config` dosyasını açın. Tek satırlık `<aspNetCore ... />`
+etiketini açılış-kapanış çiftine dönüştürüp içine `<environmentVariables>` ekleyin:
 
 ```xml
 <aspNetCore processPath="dotnet" arguments=".\ServerGuard.Api.dll" stdoutLogEnabled="false" stdoutLogFile=".\logs\stdout" hostingModel="inprocess">
@@ -322,11 +274,20 @@ dönüştüğüne dikkat edin):
     <environmentVariable name="Security__Ingest__ApiKeys__0__Key" value="SERVER10-ANAHTARI" />
     <environmentVariable name="Security__Ingest__ApiKeys__1__Name" value="SERVER11" />
     <environmentVariable name="Security__Ingest__ApiKeys__1__Key" value="SERVER11-ANAHTARI" />
+    <environmentVariable name="Cors__AllowedOrigins__0" value="http://SUNUCU10:8090" />
   </environmentVariables>
 </aspNetCore>
 ```
 
-İsteğe bağlı — Telegram bildirimi ve IP itibar sorgusu kullanacaksanız aynı bloğa ekleyin:
+> ⚠️ **`Cors__AllowedOrigins__0` panel ayrı sitede olduğu için zorunludur.** Buraya panelin
+> tarayıcıda göründüğü adres birebir yazılır: şema + sunucu adı + port. `http://sunucu10:8090`
+> ile `http://10.0.0.10:8090` **farklı origin'lerdir**; paneli hangi adresle açacaksanız onu
+> yazın. Birden fazla adres kullanacaksanız `__1`, `__2` diye ekleyin.
+
+> Production'da `localhost` origin'leri bilerek yok sayılır. Panele sunucunun üstünden
+> `localhost` ile bakarsanız API çağrıları engellenir — sunucu adıyla açın.
+
+İsteğe bağlı:
 
 ```xml
 <environmentVariable name="Notifications__Telegram__BotToken" value="..." />
@@ -334,122 +295,208 @@ dönüştüğüne dikkat edin):
 <environmentVariable name="Detection__IpReputation__ApiKey" value="..." />
 ```
 
-Dosyayı kaydedin, sonra erişimini daraltın:
+Kaydedin, sonra erişimini daraltın (yönetici cmd):
 
 ```bash
 icacls "C:\inetpub\ServerGuard\web.config" /inheritance:r /grant "Administrators:(R,W)" /grant "SYSTEM:(R,W)" /grant "IIS AppPool\ServerGuard:(R)"
 ```
 
-> **Bu dosya artık sır içeriyor.** Depoya, e-postaya veya sohbete koymayın. Yedek alırken de
-> aynı özenle davranın.
-
-**Doğrulama:** Dosyayı tarayıcıya sürükleyip bırakın; XML hatasız açılmalı. Açılmıyorsa bir etiket
-kapanmamıştır.
+> **Bu dosya artık sır içeriyor.** Depoya, e-postaya veya sohbete koymayın.
 
 ---
 
-## Adım 10 — Siteyi başlatın
+## Adım 10 — Backend'i doğrulayın
 
 ```bash
-%windir%\system32\inetsrv\appcmd start site /site.name:ServerGuard
-```
-
-**Doğrulama:**
-
-```bash
-curl.exe http://localhost:8443/health
+curl.exe http://localhost:8091/health
 ```
 
 `Healthy` dönmeli.
 
 ```bash
-curl.exe http://localhost:8443/health/ready
+curl.exe http://localhost:8091/health/ready
 ```
 
 Bu da `Healthy` dönmeli — veritabanı bağlantısının çalıştığını kanıtlar.
 
-Tarayıcıdan `http://SUNUCU10:8443` açın: **giriş ekranı** gelmeli. Adım 3'teki kullanıcı adı ve
-parolayla girin.
+Log'a bakın — `C:\inetpub\ServerGuard\logs\api-YYYYMMDD.log` içinde şu satırlar olmalı:
 
-**Bir şey dönmüyorsa** `C:\inetpub\ServerGuard\logs\api-YYYYMMDD.log` dosyasına bakın. API eksik
-yapılandırmayla **bilerek açılmaz** ve hangi ortam değişkeninin eksik olduğunu tek tek yazar.
+```
+Security configuration is complete. PanelUsers=1 IngestKeys=2 RequireHttps=False
+CORS allowed origins: http://SUNUCU10:8090
+Data retention started. ...
+```
+
+> **`CORS allowed origins`** satırı panelin adresini göstermiyorsa panel API'ye ulaşamaz.
+> Adım 9'a dönün.
+
+> API eksik yapılandırmayla **bilerek açılmaz** ve hangi ortam değişkeninin eksik olduğunu
+> tek tek yazar. `500.30` alıyorsanız cevap bu dosyadadır.
 
 ---
 
-## Adım 11 — Güvenlik duvarı
+# Panel sitesi
 
-Agent'ların API'ye ulaşabilmesi için portu açın. Kaynağı **kendi ağınızla sınırlayın**:
+## Adım 11 — Panel uygulama havuzu
+
+IIS Yönetimi → **Uygulama Havuzları** → **Uygulama Havuzu Ekle**:
+
+| Alan | Değer |
+|---|---|
+| **Name** | `ServerGuardClient` |
+| **.NET CLR version** | **No Managed Code** |
+| **Managed pipeline mode** | `Integrated` |
+
+> Panel statik dosyalardan ibarettir; içinde .NET çalışmaz. Ayrı havuz olması, panelde bir
+> sorun çıktığında backend'in ve veri toplamanın etkilenmemesini sağlar.
+
+Gelişmiş ayar gerekmez; varsayılanlar yeterli.
+
+---
+
+## Adım 12 — Panel sitesi
+
+**Siteler → Web Sitesi Ekle**:
+
+| Alan | Değer |
+|---|---|
+| **Site name** | `ServerGuardClient` |
+| **Application pool** | **Select…** → `ServerGuardClient` |
+| **Physical path** | `C:\inetpub\ServerGuardClient` |
+| **Type / IP / Port** | `http` / `All Unassigned` / `8090` |
+| **Host name** | boş |
+
+**Doğrulama:**
 
 ```bash
-netsh advfirewall firewall add rule name="ServerGuard API" dir=in action=allow protocol=TCP localport=8443 remoteip=10.0.0.0/24
+curl.exe -o NUL -w "%{http_code}\n" http://localhost:8090/
 ```
 
-> `remoteip` değerini kendi ağınıza göre yazın. Sınırsız bırakırsanız port, olması gerekenden
-> geniş bir kitleye açılır.
+`200` dönmeli. Dönmüyorsa `500.19` ihtimali yüksektir — `web.config`'deki bir bölüm IIS'te
+kilitli olabilir; hata sayfası hangi satır olduğunu yazar.
 
-**Doğrulama:** Sunucu 11'den:
+---
+
+## Adım 13 — Panelin API adresi ve CSP
+
+İki dosyada birer satır. **İkisi de API'nin adresini gösterir; biri eksik kalırsa panel boş
+görünür.**
+
+**1. `C:\inetpub\ServerGuardClient\config.json`**
+
+```json
+{
+  "apiBaseUrl": "http://SUNUCU10:8091"
+}
+```
+
+> Sondaki eğik çizgi olmadan. Panel bu adresi her açılışta okur; ileride HTTPS'e geçtiğinizde
+> **yalnızca bu satırı** değiştirmeniz yeter, yeniden derleme gerekmez.
+
+**2. `C:\inetpub\ServerGuardClient\web.config`** — `Content-Security-Policy` satırındaki
+`connect-src` bölümü:
+
+```
+connect-src 'self' http://SUNUCU10:8091 ws://SUNUCU10:8091;
+```
+
+> Hem `http` hem `ws` yazılır: SignalR canlı bağlantısı WebSocket kullanır. HTTPS'e
+> geçildiğinde ikisi de `https` / `wss` olur.
+
+**Doğrulama:**
 
 ```bash
-curl.exe http://SUNUCU10:8443/health
+curl.exe -s -D - -o NUL http://localhost:8090/ | findstr /i "content-security"
 ```
 
-`Healthy` dönmeli.
+Çıktıdaki `connect-src` API adresini içermeli.
+
+```bash
+curl.exe -o NUL -w "%{http_code}\n" http://localhost:8090/reports
+```
+
+`200` dönmeli — derin bağlantı `index.html`'e düşüyor demektir. `404` dönerse URL Rewrite
+modülü kurulu değildir.
+
+---
+
+## Adım 14 — Paneli açın
+
+Başka bir makineden (VPN üzerinden) **`http://SUNUCU10:8090`** açın.
+
+> Sunucunun üstünden `localhost` ile değil, **sunucu adıyla** açın. `Cors__AllowedOrigins`
+> içinde hangi adres yazıyorsa panelin adres çubuğunda da o olmalıdır.
+
+- [ ] Giriş ekranı geliyor
+- [ ] Adım 3'teki kullanıcı adı ve parolayla giriş yapılıyor
+- [ ] Giriş sonrası panel açılıyor, sağ üstte **"Canlı"** yazıyor
+
+**Panel boş geliyorsa** F12 → **Console**'a bakın:
+
+| Konsoldaki hata | Sebep |
+|---|---|
+| `blocked by CORS policy` | Adım 9'daki `Cors__AllowedOrigins__0` panelin adresiyle birebir aynı değil |
+| `violates ... Content-Security-Policy` | Adım 13'teki `connect-src` eksik veya yanlış |
+| `config.json okunamadı` | Dosya yerinde değil ya da JSON bozuk |
+| `ERR_CONNECTION_REFUSED` | Backend sitesi çalışmıyor; Adım 10'a dönün |
+
+---
+
+## Adım 15 — Güvenlik duvarı
+
+Agent'ların **backend**'e ulaşabilmesi için 8091'i açın. Kaynağı kendi ağınızla sınırlayın:
+
+```bash
+netsh advfirewall firewall add rule name="ServerGuard API" dir=in action=allow protocol=TCP localport=8091 remoteip=10.0.0.0/24
+```
+
+Paneli VPN üzerinden açacaksanız 8090 için de benzer bir kural gerekir.
+
+**Doğrulama:** Sunucu 11'den `curl.exe http://SUNUCU10:8091/health` → `Healthy`.
 
 > Windows, bir programa ilk bağlantı geldiğinde kendiliğinden "program tabanlı" bir kural
-> oluşturabilir ve bu kural tüm profilleri kapsayabilir. `wf.msc` açıp gereksiz kuralları temizleyin.
+> oluşturabilir ve bu tüm profilleri kapsayabilir. `wf.msc` açıp gereksiz kuralları temizleyin.
 
 ---
 
-## Adım 12 — IIS log ayarlarını doğrulayın (trafik toplamanın şartı)
+# Agent kurulumu
+
+## Adım 16 — IIS log ayarlarını doğrulayın (trafik toplamanın şartı)
 
 **Bu adımı atlamayın.** Agent, IIS'in yazdığı W3C log dosyalarını okur. Bir sitenin ayarları
-uymuyorsa **o sitenin trafiği hiç görünmez** ve bunu ancak panelde eksikliği fark ederek anlarsınız.
+uymuyorsa **o sitenin trafiği hiç görünmez**.
 
-Sunucu 10 ve 11'de yönetici PowerShell'de çalıştırın:
+Sunucu 10 ve 11'de yönetici PowerShell'de:
 
 ```powershell
 Import-Module WebAdministration; Get-ChildItem IIS:\Sites | Select-Object Name, Id, @{n='Klasor';e={$_.logFile.directory}}, @{n='Bicim';e={$_.logFile.logFormat}}, @{n='Alanlar';e={$_.logFile.logExtFileFlags}} | Format-List
 ```
 
-> `Import-Module WebAdministration` hata veriyorsa **IIS Yönetim Betikleri ve Araçları** özelliği
-> kurulu değildir: Sunucu Yöneticisi → Rol ve Özellik Ekle → Web Sunucusu (IIS) → Yönetim Araçları →
-> **IIS Yönetim Betikleri ve Araçları**. Aynı bilgileri IIS Yönetimi'nden site site de görebilirsiniz
-> (site → **Logging**).
+> `Import-Module WebAdministration` hata veriyorsa **IIS Yönetim Betikleri ve Araçları**
+> özelliği kurulu değildir. Aynı bilgilere IIS Yönetimi'nden site → **Logging** ile de
+> bakabilirsiniz.
 
-Her site için üç şeyi kontrol edin:
+Her site için üç şey:
 
 | Kontrol | Olması gereken | Değilse |
 |---|---|---|
-| **Biçim** | `W3C` | IIS/NCSA/Custom biçimlerinde `#Fields:` satırı yoktur; agent o dosyadaki satırları atlar. IIS Yönetimi → site → **Logging** → Format: **W3C** |
-| **Alanlar** | En az `Date, Time, ClientIP, UriStem, HttpStatus, TimeTaken` | Eksikse: Logging → **Select Fields…** → eksikleri işaretleyin. `time-taken` yoksa o sitenin **tüm** satırları atlanır |
-| **Klasör** | Hepsi aynı kök altında (örn. `%SystemDrive%\inetpub\logs\LogFiles`) | Farklı bir yola bakan site varsa ya oraya alın ya da agent ayarında `LogDirectories` ile ayrıca listeleyin |
-
-Değişiklik yaptıysanız o sitenin uygulama havuzunu geri dönüştürün ki yeni ayarla yazmaya başlasın.
-
-**Doğrulama:** Klasördeki bugünün dosyasını açın:
-
-```powershell
-Get-Content "C:\inetpub\logs\LogFiles\W3SVC1\u_ex*.log" -Tail 3
-```
-
-Başta `#Fields: ...` satırını içeren bir dosya ve içinde `time-taken` sütunu görmelisiniz.
-
-> IIS logları HTTP.SYS tarafından tamponlanır; kayıtlar diske en geç ~1 dakika içinde yazılır.
-> Panelde anlık değil, yaklaşık bir dakikalık gecikmeyle görünmeleri normaldir.
+| **Biçim** | `W3C` | IIS/NCSA/Custom biçimlerinde `#Fields:` satırı yoktur; agent o satırları atlar. Logging → Format: **W3C** |
+| **Alanlar** | En az `Date, Time, ClientIP, UriStem, HttpStatus, TimeTaken` | Logging → **Select Fields…**. `TimeTaken` yoksa o sitenin **tüm** satırları atlanır |
+| **Klasör** | Hepsi aynı kök altında (örn. `%SystemDrive%\inetpub\logs\LogFiles`) | Farklı yoldaki site için agent ayarında `LogDirectories` kullanın |
 
 ---
 
-## Adım 13 — Agent kurulumu (sunucu 10)
+## Adım 17 — Agent (sunucu 10)
 
-1. `publish\agent` içeriğini `C:\ServerGuard\Agent` altına kopyalayın.
+1. `ServerGuard-Agent.zip` içeriğini `C:\ServerGuard\Agent` altına ayıklayın.
 
-2. `C:\ServerGuard\Agent\appsettings.json` dosyasında dört değeri düzenleyin:
+2. `C:\ServerGuard\Agent\appsettings.json`:
 
 ```json
 {
   "Agent": {
     "ServerName": "SERVER10",
-    "ApiBaseUrl": "http://localhost:8443",
+    "ApiBaseUrl": "http://localhost:8091",
     "ApiKey": "SERVER10-ANAHTARI",
     "Traffic": {
       "LogRoot": "C:\\inetpub\\logs\\LogFiles"
@@ -458,13 +505,14 @@ Başta `#Fields: ...` satırını içeren bir dosya ve içinde `time-taken` süt
 }
 ```
 
-> `LogRoot` **dolu olmalı.** Boş bırakılırsa yalnızca tek bir klasör izlenir ve 14 sitenin
-> 13'ünün trafiği hiç toplanmaz. Dolduğunda altındaki tüm `W3SVC*` klasörleri izlenir; sonradan
-> açtığınız siteler de 10 dakika içinde kendiliğinden yakalanır.
+> `LogRoot` **dolu olmalı.** Boş bırakılırsa yalnızca tek klasör izlenir ve diğer sitelerin
+> trafiği hiç toplanmaz. Dolduğunda altındaki tüm `W3SVC*` klasörleri izlenir; sonradan
+> açtığınız siteler 10 dakika içinde kendiliğinden yakalanır.
 
-> `ServerName` **her sunucuda benzersiz** olmalı; panelde ayrım buna dayanır.
+> `ApiKey` boşsa agent **hiç açılmaz** ve sebebini log'a yazar. Anahtarsız bir agent tek bir
+> kaydı bile teslim edemez; sessizce çalışıp veri kaybetmesindense açılışta durması yeğdir.
 
-3. Hizmeti kurun (yönetici komut istemi):
+3. Hizmeti kurun (yönetici cmd):
 
 ```bash
 sc.exe create ServerGuard.Agent binPath= "C:\ServerGuard\Agent\ServerGuard.Agent.exe" start= auto DisplayName= "ServerGuard Agent"
@@ -483,36 +531,27 @@ sc.exe start ServerGuard.Agent
 
 **Doğrulama:**
 
-```bash
-sc.exe query ServerGuard.Agent
-```
-
-`STATE : 4 RUNNING` görmelisiniz. Sonra log'a bakın:
-
 ```powershell
 Get-Content "C:\ServerGuard\Agent\logs\agent-*.log" -Tail 20
 ```
 
-Şu satırlar olmalı:
+Olması gerekenler:
 
 - `Metric collector started. Server=SERVER10 ...`
-- `Traffic log watcher started. ... Directories=N` → **N, site sayınız kadar olmalı**
+- `Traffic log watcher started. ... Directories=N` → **N, site sayınız kadar**
 - `Watching IIS log directory. Directory=...` → her site için bir satır
-
-Servis hemen duruyorsa sebep log'un ilk satırlarındadır. En sık sebep: `ApiKey` boş
-(bu sürümde anahtarsız agent bilerek açılmaz).
 
 ---
 
-## Adım 14 — Agent kurulumu (sunucu 11)
+## Adım 18 — Agent (sunucu 11)
 
-Adım 13'ün aynısı, iki fark var:
+Aynısı, iki fark:
 
 ```json
 {
   "Agent": {
     "ServerName": "SERVER11",
-    "ApiBaseUrl": "http://SUNUCU10:8443",
+    "ApiBaseUrl": "http://SUNUCU10:8091",
     "ApiKey": "SERVER11-ANAHTARI",
     "Traffic": {
       "LogRoot": "C:\\inetpub\\logs\\LogFiles"
@@ -521,101 +560,84 @@ Adım 13'ün aynısı, iki fark var:
 }
 ```
 
-`ApiBaseUrl` artık `localhost` **değil**, sunucu 10'un adı. Adım 12'yi bu sunucuda da uygulayın.
+Adım 16'yı bu sunucuda da uygulayın.
 
-**Doğrulama:** Aynı log kontrolleri; ayrıca `Backend unreachable` satırı **olmamalı**. Varsa
-güvenlik duvarı veya adres yanlıştır.
+**Doğrulama:** Log'da `Backend unreachable` satırı **olmamalı**. Varsa güvenlik duvarı veya
+adres yanlıştır.
 
 ---
 
-## Adım 15 — Kurulumu baştan sona doğrulayın
-
-`publish\tools` klasörünü sunucu 10'a kopyalayın (örn. `C:\ServerGuard\Tools`) ve çalıştırın:
+## Adım 19 — Kurulumu baştan sona doğrulayın
 
 ```bash
 set SERVERGUARD_PASSWORD=panel-parolaniz
 ```
 
 ```bash
-C:\ServerGuard\Tools\ServerGuard.Tools.exe check --url http://localhost:8443 --user admin --ingest-key "SERVER10-ANAHTARI"
+C:\ServerGuard\Tools\ServerGuard.Tools.exe check --url http://localhost:8091 --user admin --ingest-key "SERVER10-ANAHTARI"
 ```
 
-Araç 12 kontrol yapar. **Hepsi `OK` olmalı**, `HATA` olan hiçbir satır kalmamalı:
+12 kontrolün **hepsi `OK`** olmalı:
 
 | Kontrol | Ne kanıtlar |
 |---|---|
-| API ayakta mı | Süreç çalışıyor |
-| Veritabanı erişilebilir mi | Bağlantı dizesi doğru |
+| API ayakta mı / Veritabanı erişilebilir mi | Süreç ve bağlantı sağlam |
 | Güvenlik header'ları | Tarayıcı savunmaları devrede |
-| Token'sız okuma engelleniyor mu | Yetkilendirme gerçekten açık |
-| Anahtarsız yazma engelleniyor mu | Sahte veri gönderilemiyor |
-| Token'sız canlı bağlantı engelleniyor mu | Hub dışarıya açık değil |
+| Token'sız okuma / anahtarsız yazma / token'sız canlı bağlantı engelleniyor mu | Yetkilendirme **gerçekten** açık |
 | Agent anahtarı geçerli mi | Agent'lar veri gönderebilecek |
 | Hatalı parola reddediliyor mu | Parola doğrulaması çalışıyor |
-| Panel oturumu açılabiliyor mu | Kullanıcı tanımı doğru |
-| Token kabul ediliyor mu | Oturum akışı sağlam |
-| Sunucu durumları | **Her iki sunucu da `Online` olmalı** |
+| Panel oturumu / token | Kullanıcı tanımı doğru |
+| Sunucu durumları | **Her iki sunucu da `Online`** |
 | Trafik ve hata oranı | 5xx oranı ve alarm sayısı |
 
-Sonra panelden gözle doğrulayın — `http://SUNUCU10:8443`:
+Panelden gözle:
 
-- [ ] Giriş yapabiliyorum
-- [ ] Sunucu kartlarında **iki sunucu** da çevrimiçi
-- [ ] CPU / RAM / Disk çubukları dolu
-- [ ] Trafik grafiğinde veri var (1–2 dakika bekleyin, IIS tamponu var)
+- [ ] İki sunucu da çevrimiçi
+- [ ] CPU / RAM / Disk dolu
+- [ ] Trafik grafiğinde veri var (1–2 dk bekleyin, IIS tamponu var)
 - [ ] Servis sağlığı tablosunda servisleriniz listeleniyor
-- [ ] Sağ üstte "Canlı" yazıyor (SignalR bağlı)
-- [ ] Çıkış yapınca giriş ekranına dönüyorum
+- [ ] Sağ üstte "Canlı"
+- [ ] Çıkış yapınca giriş ekranına dönüyor
 
 ---
 
-## Adım 16 — HTTPS (sertifika hazır olunca)
+## Adım 20 — HTTPS (sertifika hazır olunca)
 
-İç ağda bile önerilir: oturum token'ı ve alarm içerikleri düz metin akmasın.
+İlk aşamada VPN + giriş ile devam edebilirsiniz. Sertifika hazır olduğunda:
 
-1. Sunucu 10 için sertifika edinin (iç CA veya ticari) ve IIS bağlamasına ekleyin:
-   IIS Yönetimi → site → **Bağlamalar** → Ekle → tür `https`, port `8443`, sertifikayı seçin.
-2. Sertifikanın **agent'ların çalıştığı makinelerde de güvenilir** olduğunu doğrulayın. Sunucu
-   11'den `curl.exe https://SUNUCU10:8443/health` sertifika hatası vermemeli.
-3. Agent'ların `ApiBaseUrl` değerini `https://...` yapın ve hizmetleri yeniden başlatın.
-4. Son olarak HTTPS'i zorunlu kılın — `web.config` içine ekleyin:
+1. İki siteye de `https` bağlaması ekleyin (IIS → site → **Bağlamalar**).
+2. Sertifikanın **agent'ların çalıştığı makinelerde de güvenilir** olduğunu doğrulayın:
+   sunucu 11'den `curl.exe https://SUNUCU10:8091/health` sertifika hatası vermemeli.
+3. **Üç yeri** güncelleyin:
+
+| Dosya | Değişiklik |
+|---|---|
+| Panel `config.json` | `"apiBaseUrl": "https://SUNUCU10:8443"` |
+| Panel `web.config` | `connect-src 'self' https://SUNUCU10:8443 wss://SUNUCU10:8443` |
+| Backend `web.config` | `Cors__AllowedOrigins__0` → panelin yeni `https` adresi |
+
+4. Agent'ların `ApiBaseUrl` değerini `https://...` yapıp hizmetleri yeniden başlatın.
+5. Son olarak backend `web.config`'e ekleyin:
 
 ```xml
 <environmentVariable name="Security__RequireHttps" value="true" />
 ```
 
-> **Bu ayarı sertifika hazır olmadan açmayın.** HSTS tarayıcıya "bu adrese bir daha asla HTTP ile
-> gitme" der; geri alması zordur ve agent'lar güvenilmeyen sertifika yüzünden bağlanamaz.
-> Varsayılanının `false` olması bu yüzdendir.
-
----
-
-## Adım 17 — Kurulum sonrası
-
-- [ ] `ServerGuard.Tools check` görevini Görev Zamanlayıcı'ya günlük ekleyin:
-
-```bash
-schtasks /create /tn "ServerGuard Kontrol" /tr "C:\ServerGuard\Tools\ServerGuard.Tools.exe check --url http://localhost:8443" /sc daily /st 08:00 /ru SYSTEM
-```
-
-- [ ] DevExtreme lisansını uygulayın (panelin üstündeki deneme bandı kalkmalı)
-- [ ] Veri saklama sürelerini gözden geçirin (aşağıda)
-- [ ] `web.config` yedeğini parola yöneticisiyle aynı özende saklayın
+> **Sertifika hazır değilken bu ayarı açmayın.** HSTS tarayıcıya "bu adrese bir daha asla HTTP
+> ile gitme" der; geri alması zordur ve agent'lar güvenilmeyen sertifika yüzünden bağlanamaz.
 
 ---
 
 ## Yeni bir IIS sitesi eklerseniz
 
-ServerGuard tarafında **hiçbir şey yapmanız gerekmez.** `LogRoot` dolu olduğu için yeni sitenin
-log klasörü en geç 10 dakika içinde kendiliğinden bulunur ve izlenmeye başlar.
-
-Yalnızca yeni sitenin log ayarlarının Adım 12'deki üç şartı sağladığından emin olun: biçim `W3C`,
-`time-taken` alanı seçili, klasör `LogRoot` altında.
+ServerGuard tarafında **hiçbir şey yapmanız gerekmez.** `LogRoot` dolu olduğu için yeni
+sitenin log klasörü en geç 10 dakika içinde bulunur ve izlenmeye başlar. Yalnızca Adım 16'daki
+üç şartı sağladığından emin olun.
 
 ### Panelde siteler nasıl ayrışır
 
-**Site adı kaydedilmiyor.** Trafik kayıtlarında sunucu adı, istek yolu, durum kodu ve yanıt süresi
-var; hangi IIS sitesinden geldiği yok. Panelin "Servis sağlığı" tablosu, servis adını **istek
+**Site adı kaydedilmiyor.** Trafik kayıtlarında sunucu adı, istek yolu, durum kodu ve yanıt
+süresi var; hangi IIS sitesinden geldiği yok. "Servis sağlığı" tablosu servis adını **istek
 yolunun ilk iki segmentinden** türetir:
 
 ```
@@ -623,20 +645,34 @@ yolunun ilk iki segmentinden** türetir:
 /api/musteri/liste                    →  /api/musteri
 ```
 
-Bunun pratik sonucu: yolları farklı olan siteler panelde doğal olarak ayrışır, **aynı yolu kullanan
-iki site ise tek satırda birleşir**. Örneğin iki ayrı sitede de `/api/health` varsa, ikisinin
-istekleri aynı servis gibi görünür.
-
-Sitelerin panelde ayrı ayrı görünmesi gerekiyorsa bu bir geliştirme konusudur — trafik kaydına site
-kimliği eklenmesi gerekir. Şimdilik yolları çakışmayan kurulumlarda sorun çıkarmaz.
+Yolları farklı olan siteler doğal olarak ayrışır; **aynı yolu kullanan iki site tek satırda
+birleşir**. Sitelerin ayrı ayrı görünmesi gerekiyorsa trafik kaydına site kimliği eklenmelidir
+— bu bir geliştirme konusudur.
 
 ---
 
 ## Bakım
 
-### Veri saklama
+### Güncelleme
 
-Tablolar sınırsız büyümez; süresi dolan kayıtlar 6 saatte bir partiler hâlinde silinir.
+| | Backend | Panel |
+|---|---|---|
+| 1 | Siteyi durdurun (DLL'ler kilitli) | Gerekmez |
+| 2 | Dosyaları kopyalayın, **`web.config` hariç** | Dosyaları kopyalayın, **`web.config` ve `config.json` hariç** |
+| 3 | Yeni migration varsa uygulayın | — |
+| 4 | Siteyi başlatın | — |
+| 5 | `ServerGuard.Tools check` | Panelde Ctrl+F5 |
+
+> `dotnet publish` her seferinde temiz bir `web.config` üretir; sunucudaki dosyanın üzerine
+> yazarsanız **tüm ayarlarınız silinir**. Panel tarafında `config.json` için de aynı şey geçerli.
+
+Agent güncellemesi ayarları koruyarak yapılır:
+
+```bash
+powershell -ExecutionPolicy Bypass -File C:\ServerGuard\Yeni\Guncelle.ps1
+```
+
+### Veri saklama
 
 | Anahtar (`Maintenance:Retention`) | Varsayılan |
 |---|---|
@@ -645,35 +681,21 @@ Tablolar sınırsız büyümez; süresi dolan kayıtlar 6 saatte bir partiler h�
 | `SecurityEvents` | 90 gün |
 | `SecurityAlerts` | 365 gün |
 
-Değiştirmek için `web.config`'e ekleyin, örneğin trafiği 14 güne çekmek:
+Değiştirmek için backend `web.config`'e ekleyin:
 
 ```xml
 <environmentVariable name="Maintenance__Retention__TrafficLogs" value="14.00:00:00" />
 ```
 
-> Kapatılırsa (`Maintenance__Retention__Enabled=false`) disk dolana kadar veri birikir ve SQL
-> Server durduğunda izleme sisteminin kendisi çöker. Kapatacaksanız disk kullanımını ayrıca izleyin.
+> Kapatılırsa disk dolana kadar veri birikir ve SQL Server durduğunda izleme sisteminin
+> kendisi çöker.
 
 ### Log dosyaları
 
 | Bileşen | Yer | Saklama |
 |---|---|---|
-| API | `C:\inetpub\ServerGuard\logs\api-YYYYMMDD.log` | 30 dosya, dosya başına en fazla 50 MB |
-| Agent | `C:\ServerGuard\Agent\logs\agent-YYYYMMDD.log` | 14 dosya, dosya başına en fazla 20 MB |
-
-### Yeni sürüme geçiş
-
-1. `deploy\Yayinla.ps1` çalıştırın.
-2. Yeni migration varsa Adım 2'deki `dotnet ef database update` komutunu tekrar uygulayın.
-3. Siteyi durdurun, `publish\api` içeriğini kopyalayın — **`web.config` dosyasının üzerine
-   yazmayın**, sırlar orada. Siteyi başlatın.
-4. Agent'ları güncelleyin (ayarları ve okuma konumunu korur):
-
-```bash
-powershell -ExecutionPolicy Bypass -File C:\ServerGuard\Yeni\Guncelle.ps1
-```
-
-5. `ServerGuard.Tools check` ile doğrulayın.
+| Backend | `C:\inetpub\ServerGuard\logs\api-YYYYMMDD.log` | 30 dosya, en fazla 50 MB |
+| Agent | `C:\ServerGuard\Agent\logs\agent-YYYYMMDD.log` | 14 dosya, en fazla 20 MB |
 
 ---
 
@@ -681,14 +703,17 @@ powershell -ExecutionPolicy Bypass -File C:\ServerGuard\Yeni\Guncelle.ps1
 
 | Belirti | Sebep |
 |---|---|
-| `500.19` / `500.31` | Hosting Bundle kurulu değil veya `iisreset` yapılmadı (Adım 1) |
-| Site açılıyor, `/health` boş dönüyor | Uygulama havuzunun .NET CLR sürümü "Yönetilen kod yok" değil (Adım 6) |
-| Açılışta `logs` klasörüne hiçbir şey yazılmıyor | Havuz kimliğine yazma yetkisi verilmedi (Adım 8) |
-| Log'da eksik ortam değişkeni listesi | `web.config` düzenlemesi eksik (Adım 9); listedeki adları birebir kullanın |
-| `/health` Healthy, `/health/ready` değil | SQL bağlantısı kurulamıyor: kullanıcı, parola veya sunucu adı yanlış |
-| Panel açılıyor ama giriş kabul edilmiyor | Parola özeti eksik/yanlış kopyalanmış. `$` işaretleri dahil tamamı yapıştırılmalı |
-| Agent servisi hemen duruyor | `ApiKey` boş veya bir ayar aralık dışında; sebep agent log'unun ilk satırlarında |
+| `500.19` (backend) | `web.config` düzenlemesinde XML hatası; hata sayfası satırı yazar |
+| `500.19` (panel) | `web.config`'deki bir bölüm IIS'te kilitli veya URL Rewrite kurulu değil |
+| `500.30` | Havuzun CLR sürümü "No Managed Code" değil, ya da eksik ortam değişkeni. Cevap `logs\api-*.log` dosyasında |
+| `500.31` | `Microsoft.AspNetCore.App 9.0.x` kurulu değil |
+| `/health` Healthy, `/health/ready` değil | SQL bağlantısı kurulamıyor |
+| Panel boş, konsolda CORS hatası | `Cors__AllowedOrigins__0` panelin adresiyle birebir aynı değil |
+| Panel boş, konsolda CSP hatası | Panel `web.config`'deki `connect-src` eksik |
+| `/reports` 404 | URL Rewrite modülü kurulu değil |
+| Giriş kabul edilmiyor | Parola özeti eksik kopyalanmış; `$` işaretleri dahil tamamı yapıştırılmalı |
+| Agent hemen duruyor | `ApiKey` boş veya ayar aralık dışında; sebep agent log'unun ilk satırlarında |
 | Agent log'unda `Backend rejected the agent API key` | Anahtar API'deki listede yok. Kayıtlar kuyrukta bekler, düzeltince gönderilir |
-| Panelde sunucu var, trafik yok | Adım 12 atlanmış: site biçimi W3C değil veya `time-taken` seçili değil |
-| Bazı siteler panelde yok | `LogRoot` boş bırakılmış veya o sitenin log klasörü başka bir yolda |
-| Trafik 1–2 dakika gecikmeli | Normal. IIS log tamponu (HTTP.SYS) periyodik boşalır |
+| Panelde sunucu var, trafik yok | Adım 16 atlanmış: biçim W3C değil veya `TimeTaken` seçili değil |
+| Bazı siteler panelde yok | `LogRoot` boş bırakılmış |
+| Trafik 1–2 dk gecikmeli | Normal. IIS log tamponu (HTTP.SYS) periyodik boşalır |

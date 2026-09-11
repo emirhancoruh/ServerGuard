@@ -2,10 +2,10 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable, map } from 'rxjs';
 
-import { environment } from '../../../environments/environment';
 import { ApiRoutes } from '../api-routes';
 import { PagedResult } from '../models/paged-result';
 import { SecurityAlert, toSecurityAlert } from '../models/security-alert';
+import { API_BASE_URL } from '../runtime-config';
 
 export interface AlertQuery {
   serverName?: string;
@@ -18,11 +18,12 @@ export interface AlertQuery {
 /** Geçmiş alarmları sayfalayarak okur. */
 @Injectable({ providedIn: 'root' })
 export class AlertApiService {
+  private readonly apiBaseUrl = inject(API_BASE_URL);
   private readonly http = inject(HttpClient);
 
   query(query: AlertQuery): Observable<PagedResult<SecurityAlert>> {
     return this.http
-      .get<PagedResult<unknown>>(`${environment.apiBaseUrl}${ApiRoutes.alerts}`, {
+      .get<PagedResult<unknown>>(`${this.apiBaseUrl}${ApiRoutes.alerts}`, {
         params: this.toParams(query)
       })
       .pipe(map((result) => this.sanitize(result)));

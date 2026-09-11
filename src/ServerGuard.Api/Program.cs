@@ -57,6 +57,40 @@ var app = builder.Build();
 
 var security = app.Services.GetRequiredService<IOptions<SecurityOptions>>().Value;
 
+// Panel ayrı bir sitede yayınlandığında CORS zorunlu hale gelir ve yanlış yazılmış bir
+// origin tarayıcıda opak bir hataya dönüşür. Uygulanan liste açılışta yazılır; panel
+// boş görünüyorsa ilk bakılacak yer burasıdır.
+LogAllowedOrigins(app, builder.Configuration);
+
+static void LogAllowedOrigins(WebApplication app, IConfiguration configuration)
+{
+    var configured = configuration.GetSection(WebClientCors.AllowedOriginsKey).Get<string[]>() ?? [];
+    var applied = WebClientCors.ResolveOrigins(configuration, app.Environment);
+    var dropped = configured.Except(applied, StringComparer.OrdinalIgnoreCase).ToArray();
+
+    // Elenen origin'i yazmamak, "her şey doğru görünüyor ama panel çalışmıyor" durumunu
+    // yaratır; hangi değerin neden düştüğü açıkça söylenir.
+    if (dropped.Length > 0)
+    {
+        app.Logger.LogWarning(
+            "CORS origins ignored in Production because they are loopback addresses: {Origins}. " +
+            "Use the address the panel is actually opened with (server name or IP), not localhost.",
+            string.Join(", ", dropped));
+    }
+
+    if (applied.Length == 0)
+    {
+        app.Logger.LogWarning(
+            "No CORS origin is allowed ({Key} is empty). A panel served from another site will be " +
+            "blocked by the browser.",
+            WebClientCors.AllowedOriginsKey);
+
+        return;
+    }
+
+    app.Logger.LogInformation("CORS allowed origins: {Origins}", string.Join(", ", applied));
+}
+
 // Güvenlik header'ları boru hattının en başında eklenir; böylece statik dosyalar ve
 // hata yanıtları dahil hiçbir yanıt onlarsız çıkmaz.
 app.UseMiddleware<SecurityHeadersMiddleware>();
