@@ -1193,3 +1193,118 @@ hemen düzeltildi.
   sayaç (ör. Redis) gerekir.
 - **Alarm yaşam döngüsü (yeni/görüldü/çözüldü) hâlâ yok** — Prompt 15'ten devreden en değerli eksik.
 - Servis satırına tıklayıp detaya inme (drill-down) ve uygulama havuzu durumu toplama hâlâ yok.
+
+---
+
+## Prompt 17 — IIS kurulumu ve iki siteye ayrılma (2026-09-11)
+
+### Ne istendi
+
+Projeyi 10 numaralı sunucuda IIS'e kurmak. Kurulum sırasında gelen karar:
+
+> "Projeleri ayrı ayrı kuracağımız bir yapı ile yap. Angular ayrı site, backend ayrı site.
+> Tek olmasının pek bir avantajı yok. 2 site çok daha tutarlı ve geliştirilmeye açık."
+
+### Neden ayrıldı
+
+Prompt 16'da panel, API'nin `wwwroot`'undan servis ediliyordu. Gerekçesi CORS'un, ikinci
+sertifikanın ve gevşek CSP'nin ortadan kalkmasıydı. Ayırma kararı iki sebeple doğru bulundu:
+
+**1. Ekipteki diğer projelerin kalıbı bu.** Tutarlılık gerçek bir bakım değeridir; sunucuya
+bakan kişi aynı düzeni bulur.
+
+**2. Hafife alınan bir maliyet vardı.** Tek sitede panel ve API aynı pakette olduğu için, bir
+buton rengini değiştirmek bile API'yi yeniden başlatıyordu: SignalR bağlantıları kopuyor,
+veri temizleme ve alarm bildirimi worker'ları sıfırlanıyor, agent'lar birkaç saniye 503 alıyordu.
+CORS'un maliyeti **bir kez**, bunun maliyeti **her panel güncellemesinde** ödeniyordu. Sürekli
+ayakta kalması beklenen bir izleme sistemi için ikincisi daha ağır.
+
+### Ne yapıldı
+
+**1. API adresi çalışma zamanına alındı.** Angular'da adres derlemeye gömülür; ayrı sitelerde bu
+adres en az üç kez değişecekti (port → HTTPS → sunucu adı). Panel artık kendi kökündeki
+`config.json`'ı açılışta okuyor. Adres bir enjeksiyon jetonuyla dağıtılıyor; hiçbir servis adresi
+kendi başına çözmüyor. Dosya yoksa veya boşsa derleme varsayılanına düşülüyor, böylece `ng serve`
+ile geliştirme değişmeden çalışıyor.
+
+**2. CORS görünür hale getirildi.** Ayrı origin'de CORS zorunlu; yanlış yazılmış bir origin
+tarayıcıda opak bir hataya dönüşüyor ve kaynağını bulmak zor. Uygulanan liste artık açılışta
+log'a yazılıyor, Production'da elenen loopback adresleri ayrıca uyarı olarak bildiriliyor.
+
+**3. Panel sitesi için `web.config` şablonu.** SPA derin bağlantıları (`/reports`) için URL Rewrite
+kuralı, güvenlik header'ları (CSP dahil), `woff2`/`ttf` MIME tanımları ve `index.html` ile
+`config.json` için önbellek kapatma — bu iki dosyanın adı değişmediği için önbelleğe alınırlarsa
+kullanıcı güncellemeden sonra eski sürümü görür.
+
+**4. `Yayinla.ps1` dört paket üretiyor:** Backend, Panel, Agent, Tools — her biri ayrı zip. API
+paketinde panel dosyası kalmadığı doğrulanıyor.
+
+**5. Kurulum rehberi yeniden yazıldı** (20 adım, her adımın sonunda doğrulama) ve sunucudaki
+mevcut düzene uyarlandı: siteler `C:\inetpub\wwwroot\<SiteAdi>` altında, `ServerGuard` ve
+`ServerGuardClient` ikilisi mevcut `LinhubBackend`/`LinhubClient` ile aynı kalıpta.
+
+### Kurulum sırasında bulunan gerçek hatalar
+
+Hepsi sahada, kurulumu yaparken ortaya çıktı.
+
+**1. Açılış hataları IIS altında görünmüyordu.** Eksik bağlantı dizesi veya eksik güvenlik ayarı,
+DI kurulmadan önce istisna fırlatıyordu. O noktada Serilog henüz devrede değil; mesaj yalnızca
+konsola düşüyor, IIS altında konsol hiçbir yere gitmiyor ve stdout günlüğü varsayılan olarak
+kapalı. Sonuç: site `500.30` veriyor, log klasörü **boş**.
+
+En çok ihtiyaç duyulan mesaj tam da göremeyeceğimiz yerde kalıyordu — "log'a bakın" tavsiyesi
+işe yaramıyordu. Serilog bootstrap logger eklendi ve uygulama kurulumu `try/catch/finally` içine
+alındı. Yayınlanmış paket, Production'da sırsız ve konsol çıktısı tamamen kapalı çalıştırılarak
+doğrulandı: eksik üç ortam değişkenini tek tek sayan `[FTL]` kaydı dosyada oluştu.
+
+**2. `new-key --name JWT` yanlış yere yönlendiriyordu.** Çıktı, değeri
+`Security__Ingest__ApiKeys__0__Key` altına yazmayı söylüyordu. Harfiyen uygulandığında ilk agent'ın
+anahtarı eziliyor ve imza anahtarı hiç tanımlanmamış oluyordu — iki sessiz yanlış yapılandırma.
+Doküman JWT için bu komutu önerdiği hâlde çıktısı başka bir yeri işaret ediyordu. Ayrı bir
+`new-signing-key` komutu eklendi.
+
+**3. `wwwroot` klasörünün tamamen silinmesi tasarım zamanını bozuyordu.** `Yayinla.ps1` panel
+ayrıldıktan sonra klasörü siliyordu; klasör hiç yokken `dotnet ef migrations script` çalışmıyor ve
+şema betiği üretilemiyordu. Artık klasör korunup içeriği boşaltılıyor. Yayınlanan paket bundan
+etkilenmiyordu — sorun yalnızca kaynak ağacındaydı.
+
+### Doğrulama
+
+| Test | Sonuç |
+|---|---|
+| Ayrı origin'den CORS ön kontrolü (OPTIONS) | 204 + doğru `Access-Control-Allow-Origin` |
+| Ayrı origin'den giriş (POST) | 200 + doğru `Access-Control-Allow-Origin` |
+| Ayrı origin'den SignalR negotiate | 401 (token yok) + doğru `Access-Control-Allow-Origin` |
+| Panel CSP header'ı | Gönderildi, `connect-src` API adresini içeriyor |
+| SPA derin bağlantı (`/reports`) | 200 — `index.html`'e düşüyor |
+| Production'da sırsız açılış | Açılmadı, eksik değişkenler **log dosyasına** yazıldı |
+| Sunucuda `/health` ve `/health/ready` | İkisi de `Healthy` |
+| Panelden giriş denemesi | İstek API'ye ulaştı, 401 `ProblemDetails` döndü — zincirin tamamı çalışıyor |
+
+Tarayıcı içi çapraz origin denemesi tamamlanamadı: geliştirme ortamındaki önizleme paneli bu
+istekleri kendi engelliyor (`ERR_BLOCKED_BY_CLIENT`, CSP ihlali değil). Sunucu tarafı curl ile
+gerçek `Origin` header'ı kullanılarak tam doğrulandı.
+
+### Öğrenilen kavramlar
+- **Mimari kararın maliyeti tek seferlik mi, tekrarlayan mı?** CORS bir kez kurulur; her panel
+  güncellemesinde API'yi yeniden başlatmak sürekli bir maliyettir. İlk analizde bu ayrım atlanmıştı.
+- **Adres derlemeye gömülmemeli.** Ortam değiştikçe değişen bir değerin yeniden derleme
+  gerektirmesi, HTTPS'e geçiş gibi işleri gereksizce büyütür.
+- **Görünmeyen hata, olmayan hatadan kötüdür.** Bir tanı mekanizması (log dosyası) tam da hata
+  anında devre dışıysa, varlığı yanlış güven verir.
+- **Aracın çıktısı da bir arayüzdür.** Doküman doğru olsa bile, komut çıktısı kullanıcıyı yanlış
+  yere gönderiyorsa yanlış yapılandırma kaçınılmazdır.
+- **Kurulan düzene uymak.** Kendi varsayılanımı dayatmak yerine sunucuda kurulu kalıba uymak,
+  bakımı devralacak kişi için tek gerçek kolaylıktır.
+
+### Notlar / dikkat
+- **`sa` parolası kurulum sırasında sohbete girdi** ve değiştirilmesi gerekiyor. Aynı örnekte 40+
+  veritabanı var; `sa` hepsinin tam yetkilisi. ServerGuard artık yalnızca kendi veritabanında
+  `db_datareader` + `db_datawriter` yetkisi olan ayrı bir `serverguard` kullanıcısı kullanıyor.
+- Diğer projeler `sa` ile bağlanıyor. Ayrı ve daha büyük bir iş; bu turda ele alınmadı.
+- Trafik kaydında **site kimliği yok**. Servisler yalnızca istek yolunun ilk iki segmentine göre
+  ayrışıyor; aynı yolu kullanan iki site panelde tek satırda birleşir.
+- ServerGuard'ın kendi siteleri de izlenecek (site ID 1 ve 2). Panelin 15–30 saniyelik yoklamaları
+  trafik tablosunda görünecek. Gürültü yaparsa agent'a klasör hariç tutma ayarı eklenmeli.
+- HTTPS henüz yok; ilk aşamada VPN + giriş ile devam ediliyor.
+- Agent'lar henüz kurulmadı — kurulumun kalan yarısı.
