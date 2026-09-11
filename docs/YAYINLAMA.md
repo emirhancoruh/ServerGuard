@@ -156,8 +156,8 @@ Betik: sır sızıntısı kontrolü → birim testleri → backend publish → A
 
 | Zip | Nereye |
 |---|---|
-| `ServerGuard-Backend.zip` | Sunucu 10 → `C:\inetpub\ServerGuard` |
-| `ServerGuard-Panel.zip` | Sunucu 10 → `C:\inetpub\ServerGuardClient` |
+| `ServerGuard-Backend.zip` | Sunucu 10 → `C:\inetpub\wwwroot\ServerGuard` |
+| `ServerGuard-Panel.zip` | Sunucu 10 → `C:\inetpub\wwwroot\ServerGuardClient` |
 | `ServerGuard-Tools.zip` | Sunucu 10 → `C:\ServerGuard\Tools` |
 | `ServerGuard-Agent.zip` | Sunucu 10 ve 11 → `C:\ServerGuard\Agent` |
 
@@ -174,16 +174,16 @@ Sonra her zip'i kendi klasörüne ayıklayın:
 
 | Zip içeriği | Hedef klasör |
 |---|---|
-| `ServerGuard-Backend.zip` | `C:\inetpub\ServerGuard` |
-| `ServerGuard-Panel.zip` | `C:\inetpub\ServerGuardClient` |
+| `ServerGuard-Backend.zip` | `C:\inetpub\wwwroot\ServerGuard` |
+| `ServerGuard-Panel.zip` | `C:\inetpub\wwwroot\ServerGuardClient` |
 | `ServerGuard-Tools.zip` | `C:\ServerGuard\Tools` |
 
 **Doğrulama:**
 
 | Bulunmalı | Yol |
 |---|---|
-| Backend | `C:\inetpub\ServerGuard\ServerGuard.Api.dll` ve `web.config` |
-| Panel | `C:\inetpub\ServerGuardClient\index.html`, `config.json` ve `web.config` |
+| Backend | `C:\inetpub\wwwroot\ServerGuard\ServerGuard.Api.dll` ve `web.config` |
+| Panel | `C:\inetpub\wwwroot\ServerGuardClient\index.html`, `config.json` ve `web.config` |
 | Araç | `C:\ServerGuard\Tools\ServerGuard.Tools.exe` |
 
 > Backend klasöründe `wwwroot` **olmamalıdır** — panel ayrı sitede.
@@ -229,7 +229,7 @@ IIS Yönetimi → **Siteler** → sağ tık → **Web Sitesi Ekle**:
 |---|---|
 | **Site name** | `ServerGuard` |
 | **Application pool** | **Select…** → `ServerGuard` |
-| **Physical path** | `C:\inetpub\ServerGuard` |
+| **Physical path** | `C:\inetpub\wwwroot\ServerGuard` |
 | **Type / IP / Port** | `http` / `All Unassigned` / `8091` |
 | **Host name** | boş |
 
@@ -247,7 +247,7 @@ IIS Yönetimi → **Siteler** → sağ tık → **Web Sitesi Ekle**:
 
 ## Adım 8 — Backend log klasörü ve izin
 
-`C:\inetpub\ServerGuard` içinde **`logs`** klasörü oluşturun. Sağ tık → **Özellikler →
+`C:\inetpub\wwwroot\ServerGuard` içinde **`logs`** klasörü oluşturun. Sağ tık → **Özellikler →
 Güvenlik → Düzenle → Ekle** → **Konumlar…**'dan **bu bilgisayarı** seçin → nesne adına
 `IIS AppPool\ServerGuard` yazın → **Adları Denetle** → **Tamam** → **Değiştir (Modify)**
 işaretleyin → Uygula.
@@ -259,7 +259,7 @@ işaretleyin → Uygula.
 
 ## Adım 9 — Backend sırları (web.config)
 
-`C:\inetpub\ServerGuard\web.config` dosyasını açın. Tek satırlık `<aspNetCore ... />`
+`C:\inetpub\wwwroot\ServerGuard\web.config` dosyasını açın. Tek satırlık `<aspNetCore ... />`
 etiketini açılış-kapanış çiftine dönüştürüp içine `<environmentVariables>` ekleyin:
 
 ```xml
@@ -298,7 +298,7 @@ etiketini açılış-kapanış çiftine dönüştürüp içine `<environmentVari
 Kaydedin, sonra erişimini daraltın (yönetici cmd):
 
 ```bash
-icacls "C:\inetpub\ServerGuard\web.config" /inheritance:r /grant "Administrators:(R,W)" /grant "SYSTEM:(R,W)" /grant "IIS AppPool\ServerGuard:(R)"
+icacls "C:\inetpub\wwwroot\ServerGuard\web.config" /inheritance:r /grant "Administrators:(R,W)" /grant "SYSTEM:(R,W)" /grant "IIS AppPool\ServerGuard:(R)"
 ```
 
 > **Bu dosya artık sır içeriyor.** Depoya, e-postaya veya sohbete koymayın.
@@ -319,7 +319,7 @@ curl.exe http://localhost:8091/health/ready
 
 Bu da `Healthy` dönmeli — veritabanı bağlantısının çalıştığını kanıtlar.
 
-Log'a bakın — `C:\inetpub\ServerGuard\logs\api-YYYYMMDD.log` içinde şu satırlar olmalı:
+Log'a bakın — `C:\inetpub\wwwroot\ServerGuard\logs\api-YYYYMMDD.log` içinde şu satırlar olmalı:
 
 ```
 Security configuration is complete. PanelUsers=1 IngestKeys=2 RequireHttps=False
@@ -362,7 +362,7 @@ Gelişmiş ayar gerekmez; varsayılanlar yeterli.
 |---|---|
 | **Site name** | `ServerGuardClient` |
 | **Application pool** | **Select…** → `ServerGuardClient` |
-| **Physical path** | `C:\inetpub\ServerGuardClient` |
+| **Physical path** | `C:\inetpub\wwwroot\ServerGuardClient` |
 | **Type / IP / Port** | `http` / `All Unassigned` / `8090` |
 | **Host name** | boş |
 
@@ -382,7 +382,7 @@ kilitli olabilir; hata sayfası hangi satır olduğunu yazar.
 İki dosyada birer satır. **İkisi de API'nin adresini gösterir; biri eksik kalırsa panel boş
 görünür.**
 
-**1. `C:\inetpub\ServerGuardClient\config.json`**
+**1. `C:\inetpub\wwwroot\ServerGuardClient\config.json`**
 
 ```json
 {
@@ -393,7 +393,7 @@ görünür.**
 > Sondaki eğik çizgi olmadan. Panel bu adresi her açılışta okur; ileride HTTPS'e geçtiğinizde
 > **yalnızca bu satırı** değiştirmeniz yeter, yeniden derleme gerekmez.
 
-**2. `C:\inetpub\ServerGuardClient\web.config`** — `Content-Security-Policy` satırındaki
+**2. `C:\inetpub\wwwroot\ServerGuardClient\web.config`** — `Content-Security-Policy` satırındaki
 `connect-src` bölümü:
 
 ```
@@ -694,7 +694,7 @@ Değiştirmek için backend `web.config`'e ekleyin:
 
 | Bileşen | Yer | Saklama |
 |---|---|---|
-| Backend | `C:\inetpub\ServerGuard\logs\api-YYYYMMDD.log` | 30 dosya, en fazla 50 MB |
+| Backend | `C:\inetpub\wwwroot\ServerGuard\logs\api-YYYYMMDD.log` | 30 dosya, en fazla 50 MB |
 | Agent | `C:\ServerGuard\Agent\logs\agent-YYYYMMDD.log` | 14 dosya, en fazla 20 MB |
 
 ---
