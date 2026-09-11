@@ -19,7 +19,7 @@ public sealed class NewKeyCommand : ICommand
 
     public string Name => "new-key";
 
-    public string Description => "Agent icin rastgele bir API anahtari uretir.";
+    public string Description => "Bir AGENT icin rastgele API anahtari uretir.";
 
     public string Usage => "ServerGuard.Tools new-key [--name SERVER10] [--index 0]";
 
@@ -29,6 +29,9 @@ public sealed class NewKeyCommand : ICommand
         var index = arguments.GetValue(IndexOption) ?? DefaultIndex;
         var key = SecretGenerator.Create();
 
+        Console.WriteLine();
+        Console.WriteLine($"{keyName} adli AGENT icin anahtar uretildi.");
+        Console.WriteLine("Panel imza anahtari icin bu komut DEGIL, 'new-signing-key' kullanilir.");
         Console.WriteLine();
         Console.WriteLine("API tarafina (user-secrets veya ortam degiskeni):");
         Console.WriteLine($"  Security__Ingest__ApiKeys__{index}__Name={keyName}");

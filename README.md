@@ -550,6 +550,10 @@ dotnet run --project src/ServerGuard.Tools -- hash-password --user admin
 dotnet run --project src/ServerGuard.Tools -- new-key --name LOCALDEV
 ```
 
+```bash
+dotnet run --project src/ServerGuard.Tools -- new-signing-key
+```
+
 Çıkan değerleri user-secrets'a yazın:
 
 ```bash

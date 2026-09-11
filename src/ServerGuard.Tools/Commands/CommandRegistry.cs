@@ -7,7 +7,8 @@ public static class CommandRegistry
     [
         new CheckCommand(),
         new HashPasswordCommand(),
-        new NewKeyCommand()
+        new NewKeyCommand(),
+        new NewSigningKeyCommand()
     ];
 
     public static ICommand? Find(string name) =>

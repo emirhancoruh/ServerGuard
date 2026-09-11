@@ -129,11 +129,21 @@ ServerGuard.Tools.exe new-key --name SERVER11 --index 1
 ```
 
 ```bash
-ServerGuard.Tools.exe new-key --name JWT
+ServerGuard.Tools.exe new-signing-key
 ```
 
 **Doğrulama:** Elinizde 4 değer olmalı — 1 parola özeti (`pbkdf2-sha256$...`), 2 agent
 anahtarı, 1 imza anahtarı.
+
+Her çıktı kendi ortam değişkeninin adını yazar; **hangi değerin nereye gittiğini çıktıdan
+okuyun**, tahmin etmeyin:
+
+| Komut | Değer nereye gider |
+|---|---|
+| `hash-password` | `Security__Panel__Users__0__PasswordHash` |
+| `new-key --index 0` | `Security__Ingest__ApiKeys__0__Key` (+ agent'ın `appsettings.json`'ına) |
+| `new-key --index 1` | `Security__Ingest__ApiKeys__1__Key` (+ diğer agent'a) |
+| `new-signing-key` | `Security__Jwt__SigningKey` — yalnızca API'de kalır |
 
 > Her sunucuya **ayrı anahtar**: biri sızarsa yalnızca o iptal edilir.
 
